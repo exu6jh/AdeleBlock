@@ -68,7 +68,8 @@ if __name__ == "__main__":
     paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
     candidates_cache = preface_files(os.getcwd() + "/candidates")
     for cached_info in paintingtile_fftcache + paintingtile_cache + candidates_cache:
-        os.remove(cached_info)
+        if not ".gitignore" in cached_info:
+            os.remove(cached_info)
     print("Cleared.\n")
 
     ## Front blocks
@@ -166,6 +167,7 @@ if __name__ == "__main__":
             print("Clearing some cache files to free up space.")
             paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
             for cache_file in paintingtile_fftcache:
-                os.remove(cache_file)
+                if not ".gitignore" in cached_info:
+                    os.remove(cached_info)
             print("Cleared.\n")
     paintified.save(str.format("{0}/output.png", output_folder))

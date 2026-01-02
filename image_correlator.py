@@ -39,7 +39,7 @@ def correlate(main_im_file, pattern_im_file, cache=True):
         f2.append(np.sum(f2_color_arr*f2_color_arr)/np.sqrt(f2_color_arr.size))
 
         im_filename = str.format('cache/{0}_imfft_{1}.npy', main_im_file, color)
-        im_fft = np.zeros(a.shape,dtype=np.complex_)
+        im_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + im_filename):
             im_fft = np.load(im_filename)
         else:
@@ -50,7 +50,7 @@ def correlate(main_im_file, pattern_im_file, cache=True):
                 np.save(im_filename, im_fft)
 
         pattern_filename = str.format('cache/{0}_color_{1}_size_{2}_{3}.npy', pattern_im_file, color, a.shape[0], a.shape[1])
-        ptrn_fft = np.zeros(a.shape,dtype=np.complex_)
+        ptrn_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + pattern_filename):
             ptrn_fft = np.load(pattern_filename)
         else:
@@ -60,11 +60,11 @@ def correlate(main_im_file, pattern_im_file, cache=True):
             if cache:
                 np.save(pattern_filename, ptrn_fft)
 
-        main_ptrn_corr_fft = np.zeros(a.shape,dtype=np.complex_)
+        main_ptrn_corr_fft = np.zeros(a.shape,dtype=np.complex128)
         main_ptrn_corr_fft[:] = ptrn_fft[:].conjugate() * im_fft[:]
 
         im_sq_filename = str.format('cache/{0}_imsqfft_{1}.npy', main_im_file, color)
-        im_sq_fft = np.zeros(a.shape,dtype=np.complex_)
+        im_sq_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + im_sq_filename):
             im_sq_fft = np.load(im_sq_filename)
         else:
@@ -75,7 +75,7 @@ def correlate(main_im_file, pattern_im_file, cache=True):
                 np.save(im_sq_filename, im_sq_fft)
 
         mask_filename = str.format('cache/masks/size_{0}_{1}_mask_{2}_{3}.npy', a.shape[0], a.shape[1], im_pattern_arr.shape[0], im_pattern_arr.shape[1])
-        mask_fft = np.zeros(a.shape,dtype=np.complex_)
+        mask_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + mask_filename):
             mask_fft = np.load(mask_filename)
         else:
@@ -85,12 +85,12 @@ def correlate(main_im_file, pattern_im_file, cache=True):
             if cache:
                 np.save(mask_filename, mask_fft)
 
-        im_sq_mask_corr_fft = np.zeros(a.shape,dtype=np.complex_)
+        im_sq_mask_corr_fft = np.zeros(a.shape,dtype=np.complex128)
         im_sq_mask_corr_fft[:] = mask_fft[:].conjugate() * im_sq_fft[:]
 
         b[:] = 2 * main_ptrn_corr_fft[:] - im_sq_mask_corr_fft[:]
         fft_backward = ifft_obj()
-        normdiff_corr = np.zeros(a.shape,dtype=np.complex_)
+        normdiff_corr = np.zeros(a.shape,dtype=np.complex128)
         normdiff_corr[:] = fft_backward[:]
 
         # Should go from 0 to im_pattern_arr[:,:,0].size/np.sqrt(a.size)
