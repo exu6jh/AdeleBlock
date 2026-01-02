@@ -9,7 +9,7 @@ def normalize_arr_range(arr, min, max):
 def prettify_arr_fullrange(arr):
     return 255 * normalize_arr_range(arr, arr.real.min(), arr.real.max())
 
-# Produce correlations between main image and pattern shifted by position
+# Produce distances between main image and pattern shifted by position
 def distance_by_offset(main_im_file, pattern_im_file, cache=True):
     im_main = Image.open(os.getcwd() + "/" + main_im_file).convert("RGB")
     im_array = np.asarray(im_main) / 255
@@ -31,7 +31,7 @@ def distance_by_offset(main_im_file, pattern_im_file, cache=True):
     fft_obj = pyfftw.FFTW(a, b, ortho=True, normalise_idft=False, axes=(0,1))
     ifft_obj = pyfftw.FFTW(b, c, ortho=True, normalise_idft=False, axes=(0,1), direction='FFTW_BACKWARD')
 
-    correlations_rgb = np.zeros(im_array.shape, dtype='complex128')
+    distances_rgb = np.zeros(im_array.shape, dtype='complex128')
     f2 = []
 
     for color in range(3):
@@ -93,11 +93,8 @@ def distance_by_offset(main_im_file, pattern_im_file, cache=True):
         normdiff_corr = np.zeros(a.shape,dtype=np.complex128)
         normdiff_corr[:] = fft_backward[:]
 
-        # Should go from 0 to im_pattern_arr[:,:,0].size/np.sqrt(a.size)
         normdiff = f2[color] - normdiff_corr
-        correlations_rgb[:,:,color] = normdiff
+        distances_rgb[:,:,color] = normdiff
 
-    # Normalize to min and max possible
-    correlations_rgb = normalize_arr_range(correlations_rgb, 0, im_pattern_arr[:,:,0].size/np.sqrt(a.size))
 
-    return correlations_rgb
+    return distances_rgb * np.sqrt(a.size)

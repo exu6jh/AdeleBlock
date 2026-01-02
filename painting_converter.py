@@ -75,8 +75,7 @@ if __name__ == "__main__":
     print("Clearing any cached image data that may have been left over from previous session.")
     paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
     paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
-    candidates_cache = preface_files(os.getcwd() + "/candidates")
-    for cached_info in paintingtile_fftcache + paintingtile_cache + candidates_cache:
+    for cached_info in paintingtile_fftcache + paintingtile_cache:
         if not ".gitignore" in cached_info:
             os.remove(cached_info)
     print("Cleared.\n")
@@ -151,45 +150,25 @@ if __name__ == "__main__":
         for b in range(HEIGHT):
             print(str.format("Constructing painting block, column {0}/{1}, row {2}/{3} ({4}/{5} total)", a+1, WIDTH, b+1, HEIGHT, a * HEIGHT + b + 1, WIDTH * HEIGHT))
 
-            candidates = []
-            candidates_im = Image.new('RGB', (COMMON_PIXEL_SIZE * BACK_CHUNK, COMMON_PIXEL_SIZE * MIDFRONT_CHUNK))
             comparison_file = str.format("paintingtiles/tile{0}_{1}.png",a,b)
             
-            # For all combination chunks, find the closest block combo
+            # Find the closest block combo
+            blockdists = np.zeros((len(midfront_filenames), len(back_filenames)))
             for x in range(BACK_CHUNK):
                 for y in range(MIDFRONT_CHUNK):
                     print(str.format("Searching for block candidates ({0} / {1})", x * MIDFRONT_CHUNK + y + 1, BACK_CHUNK * MIDFRONT_CHUNK))
                     blocktile_file = str.format('blocktiles/tile{0}_{1}.png',x,y)
                     # Get distance between painting tile and combination chunk by offset
-                    distances_rgb = image_correlator.distance_by_offset(blocktile_file, comparison_file, cache=CACHING)
+                    distances_rgb = image_correlator.distance_by_offset(blocktile_file, comparison_file, cache=CACHING).real
                     # Since distance is on a per-pixel basis, while blocks are COMMON_PIXEL_SIZE pixels,
                     # we scale down by that factor to find distances on a per-block basis
-                    blockcorrs_tile = distances_rgb[::COMMON_PIXEL_SIZE,::COMMON_PIXEL_SIZE]
+                    blockdists_tile = distances_rgb[::COMMON_PIXEL_SIZE,::COMMON_PIXEL_SIZE]
                     # Also, since distance is on a per-color basis, we combine distances over colors through RMS
                     # to get a total block distance. The method can be changed as needed based on results
-                    blockcorrs_tile_rms = np.apply_along_axis(rms, 2, blockcorrs_tile)
-                    # Finally, get the actual ideal candidate and corresponding blocks/files
-                    tile_candidate = np.unravel_index(np.argmin(blockcorrs_tile_rms), blockcorrs_tile_rms.shape)
-                    candidates.append((midfront_chunk_indices[y] + tile_candidate[0], back_chunk_indices[x] + tile_candidate[1]))
-            
-            # Combine all candidate ideal block combos over combination chunks into one image to
-            # get the overall best candidate
-            # Once I figure out normalization, I can remove this entirely
-            for i in range(BACK_CHUNK * MIDFRONT_CHUNK):
-                (x, y) = (i // MIDFRONT_CHUNK, i % MIDFRONT_CHUNK)
-                (candidate_y, candidate_x) = candidates[i]
-                candidate_back = Image.open(back_filenames[candidate_x]).convert('RGBA')
-                candidates_im.paste(candidate_back,(COMMON_PIXEL_SIZE*x,COMMON_PIXEL_SIZE*y))
-                candidate_midfront = Image.open(midfront_filenames[candidate_y]).convert('RGBA')
-                candidates_im.paste(candidate_midfront,(COMMON_PIXEL_SIZE*x,COMMON_PIXEL_SIZE*y),candidate_midfront)
-            # Save candidate image file
-            candidates_filename = str.format("candidates/candidate{0}_{1}.png",a,b)
-            candidates_im.save(candidates_filename)
-            # Get distance between painting tile and candidate image by offset, then once again get the final best image
-            candidates_corr = image_correlator.distance_by_offset(candidates_filename, comparison_file, cache=False)
-            candidates_blockcorr_rms = np.apply_along_axis(rms, 2, candidates_corr[::COMMON_PIXEL_SIZE,::COMMON_PIXEL_SIZE])
-            final_candidate_index = np.unravel_index(np.argmin(candidates_blockcorr_rms), candidates_blockcorr_rms.shape)
-            final_block_index = candidates[final_candidate_index[1]*MIDFRONT_CHUNK + final_candidate_index[0]]
+                    blockdists_tile_rms = np.apply_along_axis(rms, 2, blockdists_tile)
+                    # Add distances for combination chunk to overall distance array
+                    blockdists[midfront_chunk_indices[y]:midfront_chunk_indices[y+1], back_chunk_indices[x]:back_chunk_indices[x+1]] = blockdists_tile_rms
+            final_block_index = np.unravel_index(np.argmin(blockdists), blockdists.shape)
 
             # Process final block image for painting tile
             final_im = Image.new('RGB', (COMMON_PIXEL_SIZE, COMMON_PIXEL_SIZE))
