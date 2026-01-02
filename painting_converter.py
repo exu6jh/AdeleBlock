@@ -46,9 +46,6 @@ if __name__ == "__main__":
     output_folder = str.format(os.getcwd() + "/outputs/{0}", os.path.basename(painting_filename))
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-    palette_path = output_folder + "/palette.txt"
-    if not os.path.isfile(palette_path):
-        open(palette_path, "x")
         
     print("Please enter a width.")
     WIDTH = int(input())
@@ -57,12 +54,17 @@ if __name__ == "__main__":
     painting_im = painting_im.resize((WIDTH*COMMON_PIXEL_SIZE,HEIGHT*COMMON_PIXEL_SIZE))
     painting_im.save(str.format('{0}/resized.png', output_folder))
 
-    print("\nDo you want to cache Fourier transform coefficient data? This will speed up calculations but also takes up significant amounts of storage (~9GB). Type 'yes' if so.")
+    palette_path = output_folder + "/palette.txt"
+    # Clears file if it already exists, creates it if it doesn't
+    f = open(palette_path, "w")
+    f.close()
+
+    print("\nDo you want to cache new Fourier transform coefficient data? This will speed up calculations but also can take up significant amounts of storage (~9GB). Type 'yes' if so.")
     if(input().strip().lower()) == 'yes':
-        print('Enabling caching.\n')
+        print('Enabling caching of new coefficient data.\n')
         CACHING = True
     else:
-        print('Keeping caching disabled.\n')
+        print('Keeping new data caching disabled.\nNote that existing cache data will still be used.\n')
     
     print("Clearing any cached image data that may have been left over from previous session.")
     paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
@@ -170,7 +172,7 @@ if __name__ == "__main__":
             paintified_overlay.paste(final_front,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b),final_front)
             paintified.paste(final_im,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b))
             paintified.save(str.format("{0}/progress.png", output_folder))
-            print(str.format("Block combination found. Back: {0}, front: {1}", final_back_filename, final_front_filename))
+            print(str.format("\nBlock combination found. Back: {0}, front: {1}", final_back_filename, final_front_filename))
             with open(palette_path, "a") as f:
                 f.write(str.format("Column {0}, row {1}\nBack: {2}\nFront: {3}\n\n", a, b, final_back_filename, final_front_filename))
                 
@@ -181,11 +183,15 @@ if __name__ == "__main__":
                     os.remove(cache_file)
             print("Cleared.\n")
             
+    print(str.format("Image processed, saving output to {0}", output_folder))
+    paintified.save(str.format("{0}/output.png", output_folder))
+    paintified_backing.save(str.format("{0}/output_backing.png", output_folder))
+    paintified_overlay.save(str.format("{0}/output_overlay.png", output_folder))
+
+    print("Doing a final clean on some cached data.")
+    os.remove(str.format("{0}/progress.png", output_folder))
     paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
     for cache_file in paintingtile_cache:
         if not ".gitignore" in cache_file:
             os.remove(cache_file)
-    paintified.save(str.format("{0}/output.png", output_folder))
-    paintified_backing.save(str.format("{0}/output_backing.png", output_folder))
-    paintified_overlay.save(str.format("{0}/output_overlay.png", output_folder))
-    os.remove(str.format("{0}/progress.png", output_folder))
+    print("Completed.")
