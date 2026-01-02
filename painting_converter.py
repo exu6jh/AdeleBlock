@@ -167,7 +167,7 @@ if __name__ == "__main__":
             print("Clearing some cache files to free up space.")
             paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
             for cache_file in paintingtile_fftcache:
-                if not ".gitignore" in cached_info:
-                    os.remove(cached_info)
+                if not ".gitignore" in cache_file:
+                    os.remove(cache_file)
             print("Cleared.\n")
     paintified.save(str.format("{0}/output.png", output_folder))
