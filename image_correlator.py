@@ -35,6 +35,9 @@ def correlate(main_im_file, pattern_im_file, cache=True):
     f2 = []
 
     for color in range(3):
+        f2_color_arr = pattern_array[:,:,color]
+        f2.append(np.sum(f2_color_arr*f2_color_arr)/np.sqrt(f2_color_arr.size))
+
         im_filename = str.format('cache/{0}_imfft_{1}.npy', main_im_file, color)
         im_fft = np.zeros(a.shape,dtype=np.complex_)
         if os.path.isfile(os.getcwd() + '/' + im_filename):
@@ -46,11 +49,16 @@ def correlate(main_im_file, pattern_im_file, cache=True):
             if cache:
                 np.save(im_filename, im_fft)
 
-        a[:] = pattern_array[:,:,color]
-        f2.append(np.sum(a*a)/np.sqrt(a.size))
-        fft_forward = fft_obj()
+        pattern_filename = str.format('cache/{0}_color_{1}_size_{2}_{3}.npy', pattern_im_file, color, a.shape[0], a.shape[1])
         ptrn_fft = np.zeros(a.shape,dtype=np.complex_)
-        ptrn_fft[:] = b[:]
+        if os.path.isfile(os.getcwd() + '/' + pattern_filename):
+            ptrn_fft = np.load(pattern_filename)
+        else:
+            a[:] = pattern_array[:,:,color]
+            fft_forward = fft_obj()
+            ptrn_fft[:] = b[:]
+            if cache:
+                np.save(pattern_filename, ptrn_fft)
 
         main_ptrn_corr_fft = np.zeros(a.shape,dtype=np.complex_)
         main_ptrn_corr_fft[:] = ptrn_fft[:].conjugate() * im_fft[:]
@@ -66,7 +74,7 @@ def correlate(main_im_file, pattern_im_file, cache=True):
             if cache:
                 np.save(im_sq_filename, im_sq_fft)
 
-        mask_filename = str.format('cache/{0}_mask_{1}_{2}.npy', main_im_file, im_pattern_arr.shape[0], im_pattern_arr.shape[1])
+        mask_filename = str.format('cache/masks/size_{0}_{1}_mask_{2}_{3}.npy', a.shape[0], a.shape[1], im_pattern_arr.shape[0], im_pattern_arr.shape[1])
         mask_fft = np.zeros(a.shape,dtype=np.complex_)
         if os.path.isfile(os.getcwd() + '/' + mask_filename):
             mask_fft = np.load(mask_filename)
@@ -80,18 +88,13 @@ def correlate(main_im_file, pattern_im_file, cache=True):
         im_sq_mask_corr_fft = np.zeros(a.shape,dtype=np.complex_)
         im_sq_mask_corr_fft[:] = mask_fft[:].conjugate() * im_sq_fft[:]
 
-        b[:] = main_ptrn_corr_fft[:]
+        b[:] = 2 * main_ptrn_corr_fft[:] - im_sq_mask_corr_fft[:]
         fft_backward = ifft_obj()
-        main_ptrn_corr = np.zeros(a.shape,dtype=np.complex_)
-        main_ptrn_corr[:] = fft_backward[:]
-
-        b[:] = im_sq_mask_corr_fft[:]
-        fft_backward = ifft_obj()
-        im_sq_mask_corr = np.zeros(a.shape,dtype=np.complex_)
-        im_sq_mask_corr[:] = fft_backward[:]
+        normdiff_corr = np.zeros(a.shape,dtype=np.complex_)
+        normdiff_corr[:] = fft_backward[:]
 
         # Should go from 0 to im_pattern_arr[:,:,0].size/np.sqrt(a.size)
-        normdiff = f2[color] - 2*main_ptrn_corr + im_sq_mask_corr
+        normdiff = f2[color] - normdiff_corr
         correlations_rgb[:,:,color] = normdiff
 
     # Normalize to min and max possible

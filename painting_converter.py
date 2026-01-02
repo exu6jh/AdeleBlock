@@ -35,16 +35,41 @@ MIDFRONT_CHUNK = 6
 WIDTH = -1
 HEIGHT = -1
 
+CACHING = False
+
 if __name__ == "__main__":
     print("Please select a painting you would like blockified.")
     painting_filename = askopenfilename()
+    print(str.format("Selected {0}", painting_filename))
     painting_im = Image.open(painting_filename).convert('RGBA')
+    output_folder = str.format(os.getcwd() + "/outputs/{0}", os.path.basename(painting_filename))
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    palette_path = output_folder + "/palette.txt"
+    if not os.path.isfile(palette_path):
+        open(palette_path, "x")
+        
     print("Please enter a width.")
     WIDTH = int(input())
     print("Please enter a height.")
     HEIGHT = int(input())
     painting_im = painting_im.resize((WIDTH*COMMON_PIXEL_SIZE,HEIGHT*COMMON_PIXEL_SIZE))
-    painting_im.save('outputs/resized.png')
+    painting_im.save(str.format('{0}/resized.png', output_folder))
+
+    print("Do you want to cache Fourier transform coefficientt data? This will speed up calculations but also takes up significant amounts of storage (~9GB). Type 'yes' if so.")
+    if(input().strip().lower()) == 'yes':
+        print('Enabling caching.')
+        CACHING = True
+    else:
+        print('Keeping caching disabled.')
+    
+    print("Clearing any cached image data that may have been left over from previous session.")
+    paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
+    paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
+    candidates_cache = preface_files(os.getcwd() + "/candidates")
+    for cached_info in paintingtile_fftcache + paintingtile_cache + candidates_cache:
+        os.remove(cached_info)
+    print("Cleared.\n")
 
     ## Front blocks
     front = os.getcwd() + "/textures/front"
@@ -96,17 +121,17 @@ if __name__ == "__main__":
     paintified = Image.new('RGB', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
     for a in range(WIDTH):
         for b in range(HEIGHT):
-            print(str.format("Analyzing painting tile, column {0}/{1}, row {2}/{3}", a+1, WIDTH, b+1, HEIGHT))
+            print(str.format("Constructing painting block, column {0}/{1}, row {2}/{3} ({4}/{5} total)", a+1, WIDTH, b+1, HEIGHT, a * HEIGHT + b + 1, WIDTH * HEIGHT))
             candidates = []
             candidates_im = Image.new('RGB', (COMMON_PIXEL_SIZE * BACK_CHUNK, COMMON_PIXEL_SIZE * MIDFRONT_CHUNK))
             comparison_file = str.format("paintingtiles/tile{0}_{1}.png",a,b)
             
             for x in range(BACK_CHUNK):
                 for y in range(MIDFRONT_CHUNK):
-                    print(str.format("Comparing image to column {0}/{1}, row {2}/{3}", x+1, BACK_CHUNK, y+1, MIDFRONT_CHUNK))
+                    print(str.format("Searching for block candidates ({0} / {1})", x * MIDFRONT_CHUNK + y + 1, BACK_CHUNK * MIDFRONT_CHUNK))
                     blocktile_file = str.format('blocktiles/tile{0}_{1}.png',x,y)
                     # Default value, just in case
-                    correlations_rgb = image_correlator.correlate(blocktile_file, comparison_file)
+                    correlations_rgb = image_correlator.correlate(blocktile_file, comparison_file, cache=CACHING)
                     blockcorrs_tile = correlations_rgb[::COMMON_PIXEL_SIZE,::COMMON_PIXEL_SIZE]
                     blockcorrs_tile_rms = np.apply_along_axis(rms, 2, blockcorrs_tile)
                     tile_candidate = np.unravel_index(np.argmin(blockcorrs_tile_rms), blockcorrs_tile_rms.shape)
@@ -127,10 +152,20 @@ if __name__ == "__main__":
             final_block_index = candidates[final_candidate_index[1]*MIDFRONT_CHUNK + final_candidate_index[0]]
 
             final_im = Image.new('RGB', (COMMON_PIXEL_SIZE, COMMON_PIXEL_SIZE))
-            final_back = Image.open(back_filenames[final_block_index[1]]).convert('RGBA')
+            final_back_filename = back_filenames[final_block_index[1]]
+            final_back = Image.open(final_back_filename).convert('RGBA')
             final_im.paste(final_back,(0,0))
-            final_front = Image.open(midfront_filenames[final_block_index[0]]).convert('RGBA')
+            final_front_filename = midfront_filenames[final_block_index[0]]
+            final_front = Image.open(final_front_filename).convert('RGBA')
             final_im.paste(final_front,(0,0),final_front)
             paintified.paste(final_im,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b))
-            paintified.save("outputs/progress.png")
-    paintified.save("outputs/output.png")
+            paintified.save(str.format("{0}/progress.png", output_folder))
+            print(str.format("Block combination found. Back: {0}, front: {1}", final_back_filename, final_front_filename))
+            with open(palette_path, "a") as f:
+                f.write(str.format("Column {0}, row {1}\nBack: {2}\nFront: {3}\n\n", a, b, final_back_filename, final_front_filename))
+            print("Clearing some cache files to free up space.")
+            paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
+            for cache_file in paintingtile_fftcache:
+                os.remove(cache_file)
+            print("Cleared.\n")
+    paintified.save(str.format("{0}/output.png", output_folder))
