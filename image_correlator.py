@@ -10,7 +10,7 @@ def prettify_arr_fullrange(arr):
     return 255 * normalize_arr_range(arr, arr.real.min(), arr.real.max())
 
 # Produce correlations between main image and pattern shifted by position
-def correlate(main_im_file, pattern_im_file, cache=True):
+def distance_by_offset(main_im_file, pattern_im_file, cache=True):
     im_main = Image.open(os.getcwd() + "/" + main_im_file).convert("RGB")
     im_array = np.asarray(im_main) / 255
 
