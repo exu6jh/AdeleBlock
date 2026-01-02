@@ -29,8 +29,9 @@ def get_pos_in_array(val, arr):
 # Every file used should be a square of the same size, as shown below.
 COMMON_PIXEL_SIZE = 16
 # There are too many file combinations for the FFT info to be comfortably stored in memory
-BACK_CHUNK = 5
-MIDFRONT_CHUNK = 6
+# We chunk into sections (dynamically set below)
+BACK_CHUNK = -1
+MIDFRONT_CHUNK = -1
 
 WIDTH = -1
 HEIGHT = -1
@@ -40,8 +41,8 @@ CACHING = False
 if __name__ == "__main__":
     print("Please select a painting you would like blockified.")
     painting_filename = askopenfilename()
-    print(str.format("Selected {0}", painting_filename))
-    painting_im = Image.open(painting_filename).convert('RGBA')
+    print(str.format("Selected {0}\n", painting_filename))
+    painting_im = Image.open(painting_filename).convert('RGB')
     output_folder = str.format(os.getcwd() + "/outputs/{0}", os.path.basename(painting_filename))
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -56,12 +57,12 @@ if __name__ == "__main__":
     painting_im = painting_im.resize((WIDTH*COMMON_PIXEL_SIZE,HEIGHT*COMMON_PIXEL_SIZE))
     painting_im.save(str.format('{0}/resized.png', output_folder))
 
-    print("Do you want to cache Fourier transform coefficientt data? This will speed up calculations but also takes up significant amounts of storage (~9GB). Type 'yes' if so.")
+    print("\nDo you want to cache Fourier transform coefficient data? This will speed up calculations but also takes up significant amounts of storage (~9GB). Type 'yes' if so.")
     if(input().strip().lower()) == 'yes':
-        print('Enabling caching.')
+        print('Enabling caching.\n')
         CACHING = True
     else:
-        print('Keeping caching disabled.')
+        print('Keeping caching disabled.\n')
     
     print("Clearing any cached image data that may have been left over from previous session.")
     paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
@@ -87,6 +88,10 @@ if __name__ == "__main__":
     back_filenames = preface_files(back) + preface_files(back_side)
 
     midfront_filenames = front_filenames+mid_filenames
+
+    # Make dynamic
+    BACK_CHUNK = len(back_filenames) // 100 + 1
+    MIDFRONT_CHUNK = len(midfront_filenames) // 100 + 1
 
     front_chunk_indices = [round(len(midfront_filenames) * i / MIDFRONT_CHUNK) for i in range(MIDFRONT_CHUNK + 1)]
     back_chunk_indices = [round(len(back_filenames) * i / BACK_CHUNK) for i in range(BACK_CHUNK + 1)]
@@ -120,6 +125,8 @@ if __name__ == "__main__":
                 final.convert('RGB').save(str.format('blocktiles/tile{0}_{1}.png',x,y))
 
     paintified = Image.new('RGB', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
+    paintified_backing = Image.new('RGB', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
+    paintified_overlay = Image.new('RGBA', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
     for a in range(WIDTH):
         for b in range(HEIGHT):
             print(str.format("Constructing painting block, column {0}/{1}, row {2}/{3} ({4}/{5} total)", a+1, WIDTH, b+1, HEIGHT, a * HEIGHT + b + 1, WIDTH * HEIGHT))
@@ -156,18 +163,29 @@ if __name__ == "__main__":
             final_back_filename = back_filenames[final_block_index[1]]
             final_back = Image.open(final_back_filename).convert('RGBA')
             final_im.paste(final_back,(0,0))
+            paintified_backing.paste(final_back,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b))
             final_front_filename = midfront_filenames[final_block_index[0]]
             final_front = Image.open(final_front_filename).convert('RGBA')
             final_im.paste(final_front,(0,0),final_front)
+            paintified_overlay.paste(final_front,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b),final_front)
             paintified.paste(final_im,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b))
             paintified.save(str.format("{0}/progress.png", output_folder))
             print(str.format("Block combination found. Back: {0}, front: {1}", final_back_filename, final_front_filename))
             with open(palette_path, "a") as f:
                 f.write(str.format("Column {0}, row {1}\nBack: {2}\nFront: {3}\n\n", a, b, final_back_filename, final_front_filename))
+                
             print("Clearing some cache files to free up space.")
             paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
             for cache_file in paintingtile_fftcache:
                 if not ".gitignore" in cache_file:
                     os.remove(cache_file)
             print("Cleared.\n")
+            
+    paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
+    for cache_file in paintingtile_cache:
+        if not ".gitignore" in cache_file:
+            os.remove(cache_file)
     paintified.save(str.format("{0}/output.png", output_folder))
+    paintified_backing.save(str.format("{0}/output_backing.png", output_folder))
+    paintified_overlay.save(str.format("{0}/output_overlay.png", output_folder))
+    os.remove(str.format("{0}/progress.png", output_folder))

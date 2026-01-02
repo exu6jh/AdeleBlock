@@ -12,7 +12,7 @@ Right now, the only way to use the tool is to get the repo locally and to run `p
 3. `pyfftw` is used for the Fourier transform. Visit [PyFFTW's PyPI page](https://pypi.org/project/pyFFTW/) for installation info.
 Your best bet is just going to be use a package manager like `pip` or `conda` for all three. A `requirements.txt` is provided for installation convenience.
 
-**IMPORTANT NOTE**: When you run the program, it will ask if you wish to enable caching. **There may be important space constraints to this.** If caching is enabled, the program will save Fourier transform coefficient data to speed up processing. This data takes up to __9 GIGABYTES__. Use this only if you are **absolutely certain** that you have that space to spare.
+**IMPORTANT NOTE**: When you run the program, it will ask if you wish to enable caching. This saves Fourier transform coefficient data to speed up processing, but the data takes up to __9 GIGABYTES__. Use this only if you are **absolutely certain** that you have that space to spare.
 
 As you process an image, the `outputs` folder will contain a subfolder for your image with a variety of contents:
 1. When the image is processing, progress images will regularly be saved.
