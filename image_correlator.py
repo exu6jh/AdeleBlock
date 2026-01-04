@@ -3,12 +3,6 @@ import numpy as np
 import pyfftw
 import os
 
-def normalize_arr_range(arr, min, max):
-    return (arr.real - min)/(max - min)
-
-def prettify_arr_fullrange(arr):
-    return 255 * normalize_arr_range(arr, arr.real.min(), arr.real.max())
-
 # Produce distances between main image and pattern shifted by position
 def distance_by_offset(main_im_file, pattern_im_file, cache=True):
     im_main = Image.open(os.getcwd() + "/" + main_im_file).convert("RGB")
@@ -95,6 +89,5 @@ def distance_by_offset(main_im_file, pattern_im_file, cache=True):
 
         normdiff = f2[color] - normdiff_corr
         distances_rgb[:,:,color] = normdiff
-
 
     return distances_rgb * np.sqrt(a.size)
