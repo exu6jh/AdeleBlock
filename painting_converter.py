@@ -27,6 +27,9 @@ def get_pos_in_array(val, arr):
         i = i + 1
     return i-1
 
+def get_block_name(filename):
+    return ' '.join(filename.split('/')[-1][:-4].split('_'))
+
 # Every file used should be a square of the same size, as shown below.
 COMMON_PIXEL_SIZE = 16
 # There are too many file combinations for the FFT info to be comfortably stored in memory
@@ -175,7 +178,7 @@ if __name__ == "__main__":
         
         # Find the closest block combo
         blockdists = np.zeros((len(midfront_filenames), len(back_filenames)))
-        for x, y in tqdm(itertools.product(range(BACK_CHUNK), range(MIDFRONT_CHUNK)), desc="Searching for block candidates", total=BACK_CHUNK*MIDFRONT_CHUNK):
+        for x, y in tqdm(itertools.product(range(BACK_CHUNK), range(MIDFRONT_CHUNK)), desc="Searching for candidates in combination tiles", total=BACK_CHUNK*MIDFRONT_CHUNK):
             blocktile_file = str.format('blocktiles/tile{0}_{1}.png',x,y)
             # Get distance between painting tile and combination chunk by offset
             distances_rgb = image_correlator.distance_by_offset(blocktile_file, comparison_file, cache=USE_CACHING).real
@@ -241,7 +244,7 @@ if __name__ == "__main__":
             paintified_overlay.paste(final_midfront,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b),final_midfront)
             # Final third block
             final_front_index = final_block_info[2] * third_sq_size + final_block_info[3]
-            final_front_filename = 'None'
+            final_front_filename = 'none'
             if final_front_index < len(front_filenames):
                 final_front_filename = front_filenames[final_front_index]
                 final_front = Image.open(final_front_filename).convert('RGBA')
@@ -252,9 +255,18 @@ if __name__ == "__main__":
             paintified.save(str.format("{0}/progress.png", output_folder))
 
             # Save information to palette
-            print(str.format("Block combination found.\nBack: {0}\nMiddle: {1}\nFront: {2}", final_back_filename, final_midfront_filename, final_front_filename))
+            print("Block combination found.")
+            backstring = str.format("Back: {0} ({1})", get_block_name(final_back_filename), final_back_filename)
+            midstring = str.format("Middle: {0} ({1})", get_block_name(final_midfront_filename), final_midfront_filename)
+            frontstring = str.format("Front: {0} ({1})", get_block_name(final_front_filename), final_front_filename)
+            print(backstring)
+            print(midstring)
+            print(frontstring)
             with open(palette_path, "a") as f:
-                f.write(str.format("Column {0}, row {1}\nBack: {2}\Middle: {3}\nFront: {4}\n\n", a+1, b+1, final_back_filename, final_midfront_filename, final_front_filename))
+                f.write(str.format("Column {0}, row {1}\n", a+1, b+1))
+                f.write(backstring + "\n")
+                f.write(midstring + "\n")
+                f.write(frontstring + "\n\n")
         else:
             final_block_index = np.unravel_index(np.argmin(blockdists), blockdists.shape)
 
@@ -275,18 +287,22 @@ if __name__ == "__main__":
             paintified.save(str.format("{0}/progress.png", output_folder))
 
             # Save information to palette
-            print(str.format("\nBlock combination found. Back: {0}, front: {1}", final_back_filename, final_midfront_filename))
+            print("Block combination found.")
+            backstring = str.format("Back: {0} ({1})", get_block_name(final_back_filename), final_back_filename)
+            frontstring = str.format("Front: {0} ({1})", get_block_name(final_midfront_filename), final_midfront_filename)
+            print(backstring)
+            print(frontstring)
             with open(palette_path, "a") as f:
-                f.write(str.format("Column {0}, row {1}\nBack: {2}\nFront: {3}\n\n", a+1, b+1, final_back_filename, final_midfront_filename))
+                f.write(str.format("Column {0}, row {1}\n", a+1, b+1))
+                f.write(backstring + "\n")
+                f.write(frontstring + "\n\n")
         
-        # Clear painting tile FFT cache info
-        print("Clearing some cache files to free up space.")
+        # Clear cache info
         paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
         thirdlayer_candidates = preface_files(os.getcwd() + "/cache/candidates_thirdlayer")
         for cache_file in paintingtile_fftcache + thirdlayer_candidates:
             if not ".gitignore" in cache_file:
                 os.remove(cache_file)
-        print("Cleared.")
     
     # Process final block image for whole painting
     print(str.format("\nImage processed, saving output to {0}/", output_folder))
@@ -296,7 +312,7 @@ if __name__ == "__main__":
     if USE_THIRD_LAYER:
         paintified_overlay2.save(str.format("{0}/output_overlay2.png", output_folder))
 
-    # Clear unnecessary saved information
+    # Clear unnecessary cached information
     print("Doing a final clean on some cached data.")
     os.remove(str.format("{0}/progress.png", output_folder))
     paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
@@ -307,4 +323,4 @@ if __name__ == "__main__":
     for cache_file in paintingtile_cache + blocktile_cache + blocktile_fftcache + mask_fftcache + candidates_cache:
         if not ".gitignore" in cache_file:
             os.remove(cache_file)
-    print(str.format("Completed. Go to {0}/ for the output.", output_folder))
+    print(str.format("Completed. Go to {0}/ for the output.\n", output_folder))
