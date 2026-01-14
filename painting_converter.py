@@ -41,7 +41,7 @@ WIDTH = -1
 HEIGHT = -1
 
 USE_CACHING = False
-USE_THIRD_LAYER = True
+LAYERS = 3
 
 if __name__ == "__main__":
     # Get the painting and set up the output folder
@@ -71,12 +71,12 @@ if __name__ == "__main__":
     print("\nWould you like your image to have two or three layers? Three layers takes a few seconds longer per block. Type '2' or 'two' for the former, '3' or 'three' for the latter.")
     while(not layer_specified):
         layer_choice = input()
-        if layer_choice.strip() == '2' or layer_choice.strip().lower() == 'two':
-            USE_THIRD_LAYER = False
+        if layer_choice.strip().lower() in ['2', 'two']:
+            LAYERS = 2
             layer_specified = True
             print("Two-layer mode selected.")
-        elif layer_choice.strip() == '3' or layer_choice.strip().lower() == 'three':
-            USE_THIRD_LAYER = True
+        elif layer_choice.strip().lower() in ['3', 'three']:
+            LAYERS = 3
             layer_specified = True
             print("Three-layer mode selected.")
         else:
@@ -93,12 +93,12 @@ if __name__ == "__main__":
     
     # Clear previous cached information
     print("Clearing any cached data that may have been left over from previous session.")
-    paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
-    paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
-    blocktile_cache = preface_files(os.getcwd() + "/blocktiles")
-    blocktile_fftcache = preface_files(os.getcwd() + "/cache/blocktiles")
-    mask_fftcache = preface_files(os.getcwd() + "/cache/masks")
-    candidates_cache = preface_files(os.getcwd() + "/cache/candidates_thirdlayer")
+    paintingtile_fftcache = preface_files(os.getcwd() + "/cache_fft/paintingtiles")
+    paintingtile_cache = preface_files(os.getcwd() + "/cache_images/paintingtiles")
+    blocktile_cache = preface_files(os.getcwd() + "/cache_images/blocktiles")
+    blocktile_fftcache = preface_files(os.getcwd() + "/cache_fft/blocktiles")
+    mask_fftcache = preface_files(os.getcwd() + "/cache_fft/masks")
+    candidates_cache = preface_files(os.getcwd() + "/cache_images/candidates_thirdlayer")
     for cached_info in paintingtile_fftcache + paintingtile_cache + blocktile_cache + blocktile_fftcache + mask_fftcache + candidates_cache:
         if not ".gitignore" in cached_info:
             os.remove(cached_info)
@@ -132,10 +132,10 @@ if __name__ == "__main__":
     # Save painting tiles
     for a, b in itertools.product(range(WIDTH), range(HEIGHT)):
         painting_crop = painting_im.crop((COMMON_PIXEL_SIZE * a, COMMON_PIXEL_SIZE * b, COMMON_PIXEL_SIZE * (a + 1), COMMON_PIXEL_SIZE * (b + 1)))
-        painting_crop.save(str.format("paintingtiles/tile{0}_{1}.png",a,b))
+        painting_crop.save(str.format("cache_images/paintingtiles/tile{0}_{1}.png",a,b))
     
     # Check for block combo tiles, otherwise recreate
-    if not all(os.path.isfile(os.getcwd() + str.format('/blocktiles/tile{0}_{1}.png', x, y)) for x, y in itertools.product(range(BACK_CHUNK),range(MIDFRONT_CHUNK))):
+    if not all(os.path.isfile(os.getcwd() + str.format('cache_images/blocktiles/tile{0}_{1}.png', x, y)) for x, y in itertools.product(range(BACK_CHUNK),range(MIDFRONT_CHUNK))):
         for x, y in tqdm(itertools.product(range(BACK_CHUNK), range(MIDFRONT_CHUNK)), desc="Creating block combination tiles", total=BACK_CHUNK*MIDFRONT_CHUNK):
             # Generate row of backing blocks
             back_row = Image.new('RGBA', ((back_chunk_indices[x+1] - back_chunk_indices[x]) * COMMON_PIXEL_SIZE, COMMON_PIXEL_SIZE))
@@ -158,7 +158,7 @@ if __name__ == "__main__":
             # Paste overlay tiles over backing tiles to get combination tiles
             final = backing.copy()
             final.paste(overlay, (0, 0), overlay)
-            final.convert('RGB').save(str.format('blocktiles/tile{0}_{1}.png',x,y))
+            final.convert('RGB').save(str.format('cache_images/blocktiles/tile{0}_{1}.png',x,y))
 
     third_sq_size = math.ceil(math.sqrt(len(front_filenames) + 1))
     third_layer = Image.new('RGBA', (third_sq_size * COMMON_PIXEL_SIZE, third_sq_size * COMMON_PIXEL_SIZE))
@@ -192,7 +192,7 @@ if __name__ == "__main__":
             blockdists[midfront_chunk_indices[y]:midfront_chunk_indices[y+1], back_chunk_indices[x]:back_chunk_indices[x+1]] = blockdists_tile_rms
         
         # Third layer processing
-        if USE_THIRD_LAYER:
+        if LAYERS == 3:
             # Get the top 25 best two-layer block combos
             blockdists_array = []
             for x in range(len(back_filenames)):
@@ -213,8 +213,8 @@ if __name__ == "__main__":
                         combo_thirdlayer.paste(combo,(i * COMMON_PIXEL_SIZE,j * COMMON_PIXEL_SIZE))
                 #... so that the third layer image can be pasted on top.
                 combo_thirdlayer.paste(third_layer,(0,0),third_layer)
-                combo_thirdlayer_file = str.format("cache/candidates_thirdlayer/{0}_{1}.png",x,y)
-                combo_thirdlayer.save(combo_thirdlayer_file)
+                combo_thirdlayer_file = str.format("candidates_thirdlayer/{0}_{1}.png",x,y)
+                combo_thirdlayer.save(str.format('cache_images/{0}', combo_thirdlayer_file))
                 
                 # Get all distances by pixel, and once again scale down to get distances by block instead
                 distances_rgb = image_correlator.distance_by_offset(combo_thirdlayer_file, comparison_file, cache=False).real
@@ -298,8 +298,8 @@ if __name__ == "__main__":
                 f.write(frontstring + "\n\n")
         
         # Clear cache info
-        paintingtile_fftcache = preface_files(os.getcwd() + "/cache/paintingtiles")
-        thirdlayer_candidates = preface_files(os.getcwd() + "/cache/candidates_thirdlayer")
+        paintingtile_fftcache = preface_files(os.getcwd() + "/cache_fft/paintingtiles")
+        thirdlayer_candidates = preface_files(os.getcwd() + "/cache_images/candidates_thirdlayer")
         for cache_file in paintingtile_fftcache + thirdlayer_candidates:
             if not ".gitignore" in cache_file:
                 os.remove(cache_file)
@@ -309,17 +309,20 @@ if __name__ == "__main__":
     paintified.save(str.format("{0}/output.png", output_folder))
     paintified_backing.save(str.format("{0}/output_backing.png", output_folder))
     paintified_overlay.save(str.format("{0}/output_overlay.png", output_folder))
-    if USE_THIRD_LAYER:
+    if LAYERS == 3:
         paintified_overlay2.save(str.format("{0}/output_overlay2.png", output_folder))
+    elif os.path.isfile(preface(output_folder, 'output_overlay2.png')):
+        os.remove(str.format("{0}/output_overlay2.png", output_folder))
 
     # Clear unnecessary cached information
     print("Doing a final clean on some cached data.")
-    os.remove(str.format("{0}/progress.png", output_folder))
-    paintingtile_cache = preface_files(os.getcwd() + "/paintingtiles")
-    blocktile_cache = preface_files(os.getcwd() + "/blocktiles")
-    blocktile_fftcache = preface_files(os.getcwd() + "/cache/blocktiles")
-    mask_fftcache = preface_files(os.getcwd() + "/cache/masks")
-    candidates_cache = preface_files(os.getcwd() + "/cache/candidates_thirdlayer")
+    if os.path.isfile(preface(output_folder, 'progress.png')):
+        os.remove(str.format("{0}/progress.png", output_folder))
+    paintingtile_cache = preface_files(os.getcwd() + "/cache_images/paintingtiles")
+    blocktile_cache = preface_files(os.getcwd() + "/cache_images/blocktiles")
+    blocktile_fftcache = preface_files(os.getcwd() + "/cache_fft/blocktiles")
+    mask_fftcache = preface_files(os.getcwd() + "/cache_fft/masks")
+    candidates_cache = preface_files(os.getcwd() + "/cache_images/candidates_thirdlayer")
     for cache_file in paintingtile_cache + blocktile_cache + blocktile_fftcache + mask_fftcache + candidates_cache:
         if not ".gitignore" in cache_file:
             os.remove(cache_file)
