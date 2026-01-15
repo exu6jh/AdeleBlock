@@ -7,9 +7,11 @@ import os
 def distance_by_offset(main_im_file, pattern_im_file, cache=True):
     im_main = Image.open(os.getcwd() + "/cache_images/" + main_im_file).convert("RGB")
     im_array = np.asarray(im_main) / 255
+    im_main.close()
 
     im_pattern = Image.open(os.getcwd() + "/cache_images/" + pattern_im_file).convert("RGB")
     im_pattern_arr = np.asarray(im_pattern)
+    im_pattern.close()
     padshape = [(0, im_array.shape[0] - im_pattern_arr.shape[0]), (0, im_array.shape[1] - im_pattern_arr.shape[1]), (0,0)]
     pattern_array = np.pad(im_pattern_arr, padshape) / 255
 
@@ -32,7 +34,7 @@ def distance_by_offset(main_im_file, pattern_im_file, cache=True):
         f2_color_arr = pattern_array[:,:,color]
         f2.append(np.sum(f2_color_arr*f2_color_arr)/np.sqrt(f2_color_arr.size))
 
-        im_filename = str.format('cache_fft/{0}_color_{1}_imfft.npy', main_im_file, color)
+        im_filename = f"cache_fft/{main_im_file}_color_{color}_imfft.npy"
         im_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + im_filename):
             im_fft = np.load(im_filename)
@@ -43,7 +45,7 @@ def distance_by_offset(main_im_file, pattern_im_file, cache=True):
             if cache:
                 np.save(im_filename, im_fft)
 
-        pattern_filename = str.format('cache_fft/{0}_color_{1}_size_{2}_{3}.npy', pattern_im_file, color, a.shape[0], a.shape[1])
+        pattern_filename = f"cache_fft/{pattern_im_file}_color_{color}_size_{a.shape[0]}_{a.shape[1]}.npy"
         ptrn_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + pattern_filename):
             ptrn_fft = np.load(pattern_filename)
@@ -57,7 +59,7 @@ def distance_by_offset(main_im_file, pattern_im_file, cache=True):
         main_ptrn_corr_fft = np.zeros(a.shape,dtype=np.complex128)
         main_ptrn_corr_fft[:] = ptrn_fft[:].conjugate() * im_fft[:]
 
-        im_sq_filename = str.format('cache_fft/{0}_color_{1}_imsqfft.npy', main_im_file, color)
+        im_sq_filename = f"cache_fft/{main_im_file}_color_{color}_imsqfft.npy"
         im_sq_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + im_sq_filename):
             im_sq_fft = np.load(im_sq_filename)
@@ -68,7 +70,7 @@ def distance_by_offset(main_im_file, pattern_im_file, cache=True):
             if cache:
                 np.save(im_sq_filename, im_sq_fft)
 
-        mask_filename = str.format('cache_fft/masks/size_{0}_{1}_mask_{2}_{3}.npy', a.shape[0], a.shape[1], im_pattern_arr.shape[0], im_pattern_arr.shape[1])
+        mask_filename = f"cache_fft/masks/size_{a.shape[0]}_{a.shape[1]}_mask_{im_pattern_arr.shape[0]}_{im_pattern_arr.shape[1]}.npy"
         mask_fft = np.zeros(a.shape,dtype=np.complex128)
         if os.path.isfile(os.getcwd() + '/' + mask_filename):
             mask_fft = np.load(mask_filename)
