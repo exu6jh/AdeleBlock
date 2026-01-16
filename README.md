@@ -18,13 +18,15 @@ Right now, the only way to use the tool is to get the repo locally and to run `p
 
 Your best bet is just going to be use a package manager like `pip` or `conda` for all requirements. A `requirements.txt` is provided for installation convenience.
 
-**IMPORTANT NOTE**: When you run the program, it will ask if you wish to enable caching. This saves Fourier transform coefficient data to speed up processing, but the data takes up to __9 GIGABYTES__. Use this only if you are **absolutely certain** that you have that space to spare.
+**IMPORTANT NOTE**: When you run the program, it will ask if you wish to enable caching. This saves Fourier transform coefficient data to speed up processing, but the data takes up to __9 GIGABYTES__, more if you're multiprocessing. Use this only if you are **absolutely certain** that you have that space to spare.
 
 As you process an image, the `outputs` folder will contain a subfolder for your image with a variety of contents:
-1. When the image is processing, progress images will regularly be saved.
+1. When the image is processing, progress images will regularly be saved (NOTE: this is temporarily disabled while multiprocessing).
 2. Upon completion, the final blockified image will be saved here.
 3. Separate images for just the backing blocks and the overlay blocks will be saved too.
 4. Finally, a text file containing a list of the exact blocks used.
+
+You can enable multiprocessing by going into `useerpref.ini` and changing `n_processes` to the desired number of concurrent subprocesses.
 
 ## How does it work?
 AdeleBlock uses a Fourier transform-based approach to evaluate correlations between image chunks and many block combinations at once. For more information, I will add a math explainer soon.
