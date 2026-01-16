@@ -32,6 +32,8 @@ def get_block_name(filename):
 
 # Every file used should be a square of the same size, as shown below.
 COMMON_PIXEL_SIZE = 16
+# If third layer mode is active, we reduce the number of base two-block candidates searched
+CANDIDATES = 25
 # If third layer mode is active, we construct a square out of available files
 THIRD_SQ_SIZE = -1
 THIRD_LAYER = None
@@ -74,11 +76,11 @@ def process_tile(a, b):
     
     # Third layer processing
     if LAYERS == 3:
-        # Get the top 25 best two-layer block combos
+        # Get the top {CANDIDATES} best two-layer block combos
         blockdists_array = []
         for x, y in itertools.product(range(len(BACK_FILENAMES)), range(len(MIDFRONT_FILENAMES))):
             blockdists_array.append((blockdists[y,x], x, y))
-        blockdists_array = sorted(blockdists_array, key=lambda dist: dist[0])[:25]
+        blockdists_array = sorted(blockdists_array, key=lambda dist: dist[0])[:CANDIDATES]
 
         # Get all three-layer distances from those two-layer block combos
         thirdlayer_dists = []
@@ -104,13 +106,13 @@ def process_tile(a, b):
             thirdlayer_combodists = distances_rgb[::COMMON_PIXEL_SIZE,::COMMON_PIXEL_SIZE]
             thirdlayer_combodistsrms = np.apply_along_axis(rms, 2, thirdlayer_combodists)
             # Add to list of distances
-            for i in range(len(FRONT_FILENAMES) + 1):
+            for i in range(len(FRONT_FILENAMES)):
                 col, row = i // THIRD_SQ_SIZE, i % THIRD_SQ_SIZE
                 thirdlayer_dists.append((x, y, col, row, thirdlayer_combodistsrms[row, col]))
         
-        # Once again get the top 25 best distances, these time for three-layer block combos.
-        # TODO: use these top 25 to provide alternate options
-        lowest_dists = sorted(thirdlayer_dists, key=lambda dist: dist[4])[:25]
+        # Once again get the top {CANDIDATES} best distances, these time for three-layer block combos.
+        # TODO: use these top {CANDIDATES} to provide alternate options
+        lowest_dists = sorted(thirdlayer_dists, key=lambda dist: dist[4])[:CANDIDATES]
         
         # Get the best three-layer block combo found
         final_block_info = lowest_dists[0]
@@ -121,9 +123,7 @@ def process_tile(a, b):
         final_midfront = MIDFRONT_FILENAMES[final_block_info[1]]
         # Final third block
         final_front_index = final_block_info[2] * THIRD_SQ_SIZE + final_block_info[3]
-        final_front = None
-        if final_front_index < len(FRONT_FILENAMES):
-            final_front = FRONT_FILENAMES[final_front_index]
+        final_front = FRONT_FILENAMES[final_front_index]
 
         return (final_back, final_midfront, final_front)
     else:
@@ -282,11 +282,10 @@ if __name__ == "__main__":
             paintified_overlay.paste(final_midfront,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b),final_midfront)
             final_midfront.close()
             # Final third block
-            if(final_front_file):
-                final_front = Image.open(final_front_file).convert('RGBA')
-                final_im.paste(final_front,(0,0),final_front)
-                paintified_overlay2.paste(final_front,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b),final_front)
-                final_front.close()
+            final_front = Image.open(final_front_file).convert('RGBA')
+            final_im.paste(final_front,(0,0),final_front)
+            paintified_overlay2.paste(final_front,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b),final_front)
+            final_front.close()
             # Final combination block
             paintified.paste(final_im,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b))
             final_im.close()
