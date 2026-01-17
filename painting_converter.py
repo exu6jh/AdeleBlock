@@ -102,7 +102,7 @@ def get_files_for_tile(a, b, use_tqdm):
         if use_tqdm:
             it = tqdm(blockdists_array, desc="Searching for third layer candidates")
         else:
-            print(f"Searching for third layer candidates for tile {a*HEIGHT+b+1}/{BACK_CHUNK*MIDFRONT_CHUNK}")
+            print(f"Searching for third layer candidates for tile {a*HEIGHT+b+1}/{WIDTH*HEIGHT}")
         for (_, x, y) in it:
             # Generate a grid of the current two-layer block combo...
             combo_thirdlayer = Image.new('RGBA', (THIRD_SQ_SIZE * COMMON_PIXEL_SIZE, THIRD_SQ_SIZE * COMMON_PIXEL_SIZE))
@@ -178,20 +178,12 @@ def process_tile(a, b, progress_image, palette_path, use_tqdm):
         # Final third block
         final_front = Image.open(final_front_file).convert('RGBA')
         final_im.paste(final_front,(0,0),final_front)
-        # Save images to progress if not multiprocessing:
-        if N_PROCESSES == 1:
-            progress_im = Image.open(progress_image)
-            progress_im.paste(final_im,(COMMON_PIXEL_SIZE*a,COMMON_PIXEL_SIZE*b))
-            progress_im.save(progress_image)
-            progress_im.close()
 
         # Save information to palette
         backstring = f"Back: {get_block_name(final_back_file)} ({final_back_file})"
         midstring = f"Middle: {get_block_name(final_midfront_file)} ({final_midfront_file})"
         frontstring = f"Front: {get_block_name(final_front_file)} ({final_front_file})"
         print(f"Block combination found for tile {a*HEIGHT+b+1}/{WIDTH*HEIGHT}.\n{backstring}\n{midstring}\n{frontstring}")
-        if N_PROCESSES == 1:
-            print()
         with open(palette_path, "a") as f:
             f.write(f"Column {a+1}, row {b+1}\n{backstring}\n{midstring}\n{frontstring}\n\n")
         
@@ -218,8 +210,6 @@ def process_tile(a, b, progress_image, palette_path, use_tqdm):
         backstring = f"Back: {get_block_name(final_back_file)} ({final_back_file})"
         frontstring = f"Front: {get_block_name(final_front_file)} ({final_front_file})"
         print(f"Block combination found for tile {a*HEIGHT+b+1}/{WIDTH*HEIGHT}.\n{backstring}\n{frontstring}")
-        if N_PROCESSES == 1:
-            print()
         with open(palette_path, "a") as f:
             f.write(f"Column {a+1}, row {b+1}\n{backstring}\n{frontstring}\n\n")
         
@@ -257,8 +247,7 @@ if __name__ == "__main__":
 
     # Progress image
     progress_image = f"{output_folder}/progress.png"
-    if N_PROCESSES == 1:
-        painting_im.save(progress_image)
+    painting_im.save(progress_image)
     # Create palette information file
     palette_path = f"{output_folder}/palette.txt"
     # Clears file if it already exists, creates it if it doesn't
@@ -330,7 +319,6 @@ if __name__ == "__main__":
     for a, b in itertools.product(range(WIDTH), range(HEIGHT)):
         painting_crop = painting_im.crop((COMMON_PIXEL_SIZE * a, COMMON_PIXEL_SIZE * b, COMMON_PIXEL_SIZE * (a + 1), COMMON_PIXEL_SIZE * (b + 1)))
         painting_crop.save(f"cache_images/paintingtiles/tile_{a}_{b}.png")
-    painting_im.close()
     
     # Check for block combo tiles, otherwise recreate
     if not all(os.path.isfile(f"{os.getcwd()}/cache_images/blocktiles/tile_{x}_{y}.png") for x, y in itertools.product(range(BACK_CHUNK),range(MIDFRONT_CHUNK))):
@@ -372,35 +360,61 @@ if __name__ == "__main__":
     thirdlayer.save(f"cache_images/thirdlayer.png")
 
     # Actual main conversion section
-    paintified = Image.new('RGB', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
+    paintified = painting_im.copy()
+    painting_im.close()
     paintified_backing = Image.new('RGB', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
     paintified_overlay = Image.new('RGBA', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
     paintified_overlay2 = Image.new('RGBA', (COMMON_PIXEL_SIZE * WIDTH, COMMON_PIXEL_SIZE * HEIGHT))
 
-    if N_PROCESSES > 1:
-        print("Performing an initial iteration to cache FFT data")
-    # Run an initial iteration to get cache files working
-    alltile00 = process_tile(0, 0, progress_image, palette_path, True)
-    alltiles = []
     # Then multiprocess
     if N_PROCESSES > 1:
-        with Pool(N_PROCESSES) as p:
-            alltiles = p.starmap(process_tile, [(a, b, progress_image, palette_path, False) for a, b in itertools.product(range(WIDTH), range(HEIGHT)) if a > 0 or b > 0])
-    else:
-        alltiles = [process_tile(a, b, progress_image, palette_path, True) for a, b in itertools.product(range(WIDTH), range(HEIGHT)) if a > 0 or b > 0]
-    alltiles = [alltile00] + alltiles
-
-    # Combine all info into block image files
-    for final_info in alltiles:
-        paintified.paste(final_info[2],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]))
-        final_info[2].close()
-        paintified_backing.paste(final_info[3],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]))
-        final_info[3].close()
-        paintified_overlay.paste(final_info[4],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]),final_info[4])
-        final_info[4].close()
+        # Run an initial iteration to get cache files working
+        print("Performing an initial iteration to cache FFT data")
+        alltile00 = process_tile(0, 0, progress_image, palette_path, True)
+        paintified.paste(alltile00[2],(COMMON_PIXEL_SIZE*alltile00[0],COMMON_PIXEL_SIZE*alltile00[1]))
+        alltile00[2].close()
+        paintified_backing.paste(alltile00[3],(COMMON_PIXEL_SIZE*alltile00[0],COMMON_PIXEL_SIZE*alltile00[1]))
+        alltile00[3].close()
+        paintified_overlay.paste(alltile00[4],(COMMON_PIXEL_SIZE*alltile00[0],COMMON_PIXEL_SIZE*alltile00[1]),alltile00[4])
+        alltile00[4].close()
         if LAYERS == 3:
-            paintified_overlay2.paste(final_info[5],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]),final_info[5])
-            final_info[5].close()
+            paintified_overlay2.paste(alltile00[5],(COMMON_PIXEL_SIZE*alltile00[0],COMMON_PIXEL_SIZE*alltile00[1]),alltile00[5])
+            alltile00[5].close()
+        paintified.save(progress_image)
+
+        print("Multiprocessing")
+        tile_pos = list(itertools.product(range(WIDTH), range(HEIGHT)))
+        process_chunk_indices = [1+N_PROCESSES*b for b in range((WIDTH*HEIGHT-1)//N_PROCESSES+1)]+[WIDTH*HEIGHT]
+        with Pool(N_PROCESSES) as p:
+            for i in range(len(process_chunk_indices)-1):
+                process_chunk = p.starmap(process_tile, [(a, b, progress_image, palette_path, False) for a, b in tile_pos[process_chunk_indices[i]:process_chunk_indices[i+1]]])
+                # Combine all info into block image files
+                for final_info in process_chunk:
+                    paintified.paste(final_info[2],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]))
+                    final_info[2].close()
+                    paintified_backing.paste(final_info[3],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]))
+                    final_info[3].close()
+                    paintified_overlay.paste(final_info[4],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]),final_info[4])
+                    final_info[4].close()
+                    if LAYERS == 3:
+                        paintified_overlay2.paste(final_info[5],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]),final_info[5])
+                        final_info[5].close()
+                    paintified.save(progress_image)
+                print()
+    else:
+        for a, b in itertools.product(range(WIDTH), range(HEIGHT)):
+            final_info = process_tile(a, b, progress_image, palette_path, True)
+            paintified.paste(final_info[2],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]))
+            final_info[2].close()
+            paintified_backing.paste(final_info[3],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]))
+            final_info[3].close()
+            paintified_overlay.paste(final_info[4],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]),final_info[4])
+            final_info[4].close()
+            if LAYERS == 3:
+                paintified_overlay2.paste(final_info[5],(COMMON_PIXEL_SIZE*final_info[0],COMMON_PIXEL_SIZE*final_info[1]),final_info[5])
+                final_info[5].close()
+            paintified.save(progress_image)
+            print()
 
     # Process final block image for whole painting
     print(f"\nImage processed, saving output to {output_folder}/")
