@@ -1,35 +1,52 @@
 # AdeleBlock
 
-## Overview
-AdeleBlock is a Python program to convert pictures into Minecraft blocks. Rather than a pixel art approach where each pixel of the original painting is a single block, AdeleBlock chunks pictures into 16 x 16 sections and finds combinations of blocks that most closely match each one.
+AdeleBlock converts an image into a Minecraft block mosaic. Each source tile maps to one 16 × 16 block texture. The program can combine two or three block layers.
 
-### Example, two layers:
-![Mona Lisa blockified, 2 layers](./readme_resources/mona_lisa_blocks_2layers.png)
+## Requirements
 
-### Example, three layers:
-![Mona Lisa blockified, 3 layers](./readme_resources/mona_lisa_blocks_3layers.png)
+- Python 3.10 or later
+- NumPy
+- Pillow
+- tqdm
 
-## How do I use it?
-Right now, the only way to use the tool is to get the repo locally and to run `painting_converter.py` directly. Three Python packages are required to run this:
-1. `pillow` is used for all image processing needs. Visit [Pillow's installation page](https://pillow.readthedocs.io/en/stable/installation/basic-installation.html) for installation info.
-2. `numpy` is used for general math processing needs. Visit [Numpy's installation page](https://numpy.org/install/) for installation info.
-3. `pyfftw` is used for the Fourier transform. Visit [PyFFTW's PyPI page](https://pypi.org/project/pyFFTW/) for installation info.
-4. `tqdm` is used for the progress bar. Visit [tqdm's PyPI page](https://pypi.org/project/tqdm/) for installation info.
+Install the packages:
 
-Your best bet is just going to be use a package manager like `pip` or `conda` for all requirements. A `requirements.txt` is provided for installation convenience.
+```console
+python -m pip install -r requirements.txt
+```
 
-**IMPORTANT NOTE**: When you run the program, it will ask if you wish to enable caching. This saves Fourier transform coefficient data to speed up processing, but the data takes up to __9 GIGABYTES__, more if you're multiprocessing. Use this only if you are **absolutely certain** that you have that space to spare.
+Run the converter:
 
-As you process an image, the `outputs` folder will contain a subfolder for your image with a variety of contents:
-1. When the image is processing, progress images will regularly be saved (NOTE: this is temporarily disabled while multiprocessing).
-2. Upon completion, the final blockified image will be saved here.
-3. Separate images for just the backing blocks and the overlay blocks will be saved too.
-4. Finally, a text file containing a list of the exact blocks used.
+```console
+python painting_converter.py
+```
 
-You can enable multiprocessing by going into `useerpref.ini` and changing `n_processes` to the desired number of concurrent subprocesses.
+Select an image. Then enter the required block width, block height, and layer count. The program writes the result, each separate layer, and a block palette to `outputs/<source filename>/`.
 
-## How does it work?
-AdeleBlock uses a Fourier transform-based approach to evaluate correlations between image chunks and many block combinations at once. For more information, I will add a math explainer soon.
+For three-layer images, `candidates` in `userpref.ini` controls the number of two-layer matches that the program tests with every third-layer texture. A larger value can improve the result, but it increases the third-layer run time and memory use.
+
+## Algorithm
+
+The program loads each texture one time. It composites candidate texture batches with the same integer alpha operation that Pillow uses. It converts the candidates and source tiles from sRGB to OKLab. OKLab distance gives a closer model of perceived color difference than distance in gamma-encoded RGB.
+
+For each candidate batch, the program calculates squared Euclidean distance with this identity:
+
+```text
+distance²(x, y) = ||x||² + ||y||² - 2(x · y)
+```
+
+NumPy calculates the dot products for all source tiles in one matrix operation. This operation replaces the previous per-tile PNG, FFT, and cache-file loop. The program does not need the former multi-gigabyte FFT cache.
+
+Two-layer mode searches all backing and overlay combinations. Three-layer mode searches all two-layer combinations, keeps the configured best candidates for each source tile, and tests each third-layer texture against that shortlist.
+
+## Performance reference
+
+The measured reference in [`benchmark_results`](benchmark_results) uses the 960 × 1452 public-domain Mona Lisa source and a 20 × 20-block, two-layer output. The optimized implementation completed the full cold run in 73.34 seconds on the development machine.
+
+The original implementation completed its 31-second setup and 5 of 42 FFT chunks for the first tile in 41 seconds. That measured rate projects to approximately 38 hours for 400 tiles. The original run was stopped because a full result was not practical. This value is a projection, not a completed-run time.
+
+The `before.png` comparison uses the original RGB channel-RMS selection metric with the same candidate catalog and exact alpha composition. The `after.png` comparison uses OKLab. Mean OKLab error decreased from 0.001816 to 0.001712, which is a 5.73% reduction.
 
 ## Name
-The name AdeleBlock comes from a combination of the *Portrait of Adele Bloch-Bauer I (1903 - 1907)* by Gustav Klimt (commonly referred to as *The Lady in Gold* and *The Woman in Gold*), and, well, Minecraft blocks. I came up with the name on the spot because I wanted a combination Minecraft/art pun.
+
+The name combines *Portrait of Adele Bloch-Bauer I* by Gustav Klimt with Minecraft blocks.
