@@ -4,9 +4,14 @@ import configparser
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
-from tkinter.filedialog import askopenfilename
+from PIL import Image, ImageSequence
 from tqdm import tqdm
+
+TKINTER_FLAG=True
+try:
+    from tkinter.filedialog import askopenfilename
+except ImportError:
+    TKINTER_FLAG=False
 
 
 PIXELS = 16
@@ -149,9 +154,10 @@ def tile_image(tiles: np.ndarray, width: int, height: int, mode: str) -> Image.I
     return Image.fromarray(pixels.reshape(height * PIXELS, width * PIXELS, -1), mode)
 
 
-def save_results(source, source_name, width, height, layers, matches,
-                 back_paths, middle_paths, front_paths, backs, middles, fronts):
-    output_folder = OUTPUTS / source_name
+def save_results(source, output_folder, width, height, layers, matches,
+                 back_paths, middle_paths, front_paths, backs, middles, fronts, video_frame=0):
+    if video_frame > 0:
+        output_folder = output_folder / "frames" / str(video_frame)
     output_folder.mkdir(parents=True, exist_ok=True)
     source.resize((width * PIXELS, height * PIXELS), Image.Resampling.LANCZOS).save(output_folder / "original.png")
     back_tiles = backs[matches[:, 0]]
@@ -194,39 +200,81 @@ def read_positive_int(prompt: str) -> int:
         print("Enter a positive whole number.")
 
 
-def main() -> None:
-    print("Select a painting to convert.")
-    painting_filename = askopenfilename()
-    if not painting_filename:
-        print("No painting was selected.")
+def process_visual(visual_file, width, height, layers, output_folder, video_frame) -> None:
+    parser = configparser.ConfigParser()
+    parser.read(ROOT / "userpref.ini")
+    shortlist_size = max(1, parser.getint("DEFAULT", "candidates", fallback=25))
+
+    # Get textures
+    front_paths = texture_files("front", "front-side")
+    middle_paths = front_paths + texture_files("mid", "mid-side")
+    back_paths = texture_files("back", "back-side")
+    print("Loading textures.")
+    fronts = load_textures(front_paths)
+    middles = load_textures(middle_paths)
+    backs = load_textures(back_paths)
+
+    # Get specified file tiles
+    targets = tile_array(visual_file, width, height)
+
+    # Find matches
+    pairs, _ = find_two_layer_matches(targets, backs, middles, shortlist_size if layers == 3 else 1)
+    matches = find_three_layer_matches(targets, pairs, backs, middles, fronts) if layers == 3 else pairs[:, 0]
+
+    # Save
+    output_folder = save_results(
+        visual_file, output_folder, width, height, layers, matches,
+        back_paths, middle_paths, front_paths, backs, middles, fronts,
+        video_frame
+    )
+    print(f"Completed. Output: {output_folder}")
+
+def main():
+    # Specify file
+    if TKINTER_FLAG:
+        print("Select a file to convert.")
+        visual_filename = askopenfilename()
+    else:
+        print("tkinter not detected. Please put an input file into the input_files folder, and type its name here to process it.")
+        visual_filename = ROOT / "input_files" / input().strip()
+    if not visual_filename:
+        print("No file was selected.")
         return
+
+    file_path = Path(visual_filename)
+    output_folder = OUTPUTS / file_path.name
+
+    # Specify dimensions and layers
     width = read_positive_int("Width in blocks: ")
     height = read_positive_int("Height in blocks: ")
     while (layer_choice := input("Layers (2 or 3): ").strip()) not in {"2", "3"}:
         print("Enter 2 or 3.")
     layers = int(layer_choice)
-    parser = configparser.ConfigParser()
-    parser.read(ROOT / "userpref.ini")
-    shortlist_size = max(1, parser.getint("DEFAULT", "candidates", fallback=25))
-
-    front_paths = texture_files("front", "front-side")
-    middle_paths = front_paths + texture_files("mid", "mid-side")
-    back_paths = texture_files("back", "back-side")
-    print("Loading textures once.")
-    fronts = load_textures(front_paths)
-    middles = load_textures(middle_paths)
-    backs = load_textures(back_paths)
-    with Image.open(painting_filename) as source_file:
-        source = source_file.convert("RGB")
-    targets = tile_array(source, width, height)
-    pairs, _ = find_two_layer_matches(targets, backs, middles, shortlist_size if layers == 3 else 1)
-    matches = find_three_layer_matches(targets, pairs, backs, middles, fronts) if layers == 3 else pairs[:, 0]
-    output_folder = save_results(
-        source, Path(painting_filename).name, width, height, layers, matches,
-        back_paths, middle_paths, front_paths, backs, middles, fronts,
-    )
-    print(f"Completed. Output: {output_folder}")
-
+    
+    # Get file extension
+    ext = file_path.suffix
+    if ext == '.gif':
+        print("GIF detected")
+        frame_index = 0
+        output_imgs = []
+        max_duration = 0
+        with Image.open(visual_filename) as visual_file:
+            for frame in ImageSequence.Iterator(visual_file):
+                frame_index += 1
+                max_duration = max(max_duration, frame.info.get("duration", 100))
+                process_visual(frame, width, height, layers, output_folder, video_frame=frame_index)
+        if frame_index == 0:
+            # GIF has no frames
+            return
+        for i in range(frame_index):
+            frame_output = output_folder / "frames" / str(i+1) / "output.png"
+            output_imgs.append(Image.open(frame_output))
+        output_imgs[0].save(output_folder / "output.gif", save_all=True, append_images=output_imgs[1:], duration=max_duration, loop=0)
+        for i in range(frame_index):
+            output_imgs[i].close()
+    else:
+        with Image.open(visual_filename) as visual_file:
+            process_visual(visual_file, width, height, layers, output_folder)
 
 if __name__ == "__main__":
     main()
