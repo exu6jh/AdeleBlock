@@ -200,7 +200,7 @@ def read_positive_int(prompt: str) -> int:
         print("Enter a positive whole number.")
 
 
-def process_visual(visual_file, width, height, layers, output_folder, video_frame) -> None:
+def process_visual(visual_file, width, height, layers, output_folder, video_frame=0) -> None:
     parser = configparser.ConfigParser()
     parser.read(ROOT / "userpref.ini")
     shortlist_size = max(1, parser.getint("DEFAULT", "candidates", fallback=25))
