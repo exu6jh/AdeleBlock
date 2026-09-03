@@ -100,10 +100,10 @@ def oklab_features(rgb: np.ndarray) -> np.ndarray:
         rgb: An NP array corresponding to block-divided sRGB values, dimension [#images, PIXELS, PIXELS, 3]
 
     Returns:
-        out: An NP array of block-divided flattened Oklab values, dimension [#images, 3 * PIXELS^2]
+        out: An NP array of block-divided flattened Oklab values, dimension [#images, 3 * PIXELS ^ 2]
     """
     # Scale sRGB (0-255) to a 0-1 fractional value
-    values = rgb.astype(np.float32) / 255.0
+    values = rgb.astype(np.single) / 255.0
     # Convert sRGB to linear RGB using standard transfer function
     values = np.where(values <= 0.04045, values / 12.92, ((values + 0.055) / 1.055) ** 2.4)
     # This makes it so that the channel index is top level, i.e. [0] corresponds to red over all pixels, [1] to green, etc.
@@ -174,7 +174,7 @@ def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, shortlist_siz
         target_norms = np.einsum("ij,ij->i", targets, targets)
     else:
         # Dimension [width * height, PIXELS ^ 2, 3]
-        targets = targets_rgb.reshape(len(targets_rgb), -1, 3).astype(np.float32) / 255.0
+        targets = targets_rgb.reshape(len(targets_rgb), -1, 3).astype(np.single) / 255.0
         # Einstein summation notation; this goes through each block, and for each channel, sums the square of the value
         # Dimension [width * height, 3], each value corresponds to the norm in each block-channel
         target_norms = np.einsum("tpc,tpc->tc", targets, targets)
@@ -182,7 +182,7 @@ def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, shortlist_siz
     combination_count = len(backs_rgba) * len(overlays_rgba)
     keep = min(shortlist_size, combination_count)
     # The S closest-matching block combo scores and their block indices
-    best_scores = np.full((len(targets), keep), np.inf, dtype=np.float32)
+    best_scores = np.full((len(targets), keep), np.inf, dtype=np.single)
     best_indices = np.full((len(targets), keep), -1, dtype=np.int64)
     # The number of backing-overlay combos to score at once
     batches = range(0, combination_count, SCORE_BATCH_SIZE)
@@ -201,15 +201,16 @@ def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, shortlist_siz
             candidates = oklab_features(composites)
             # Dimension [#composites]
             candidate_norms = np.einsum("ij,ij->i", candidates, candidates)
-            # Apply distance function (||x||^2 - 2(x * y) + ||y||^2)
+            # Apply distance function
+            # Dimension [width * height, #candidates]
             scores = target_norms[:, None] + candidate_norms[None, :] - 2.0 * targets @ candidates.T
         else:
             # Like above, get the norm for each block-channel
             # Dimension [width * height, PIXELS ^ 2, 3]
-            candidates = composites.reshape(len(composites), -1, 3).astype(np.float32) / 255.0
+            candidates = composites.reshape(len(composites), -1, 3).astype(np.single) / 255.0
             # Dimension [width * height, 3]
             candidate_norms = np.einsum("kpc,kpc->kc", candidates, candidates)
-            scores = np.zeros((len(targets), len(candidates)), dtype=np.float32)
+            scores = np.zeros((len(targets), len(candidates)), dtype=np.single)
             # Apply distance function to each channel and add to score
             for channel in range(3):
                 channel_ssd = (
@@ -241,10 +242,14 @@ def find_three_layer_matches(targets_rgb, two_layer_pairs, backs_rgba, middles_r
     Returns:
         out: NP array of file indices in the best three-layer combination found, dimension [width * height, 3]
     """
-    # Convert target imag tiles into Oklab
+    # Convert target image tiles into Oklab
+    # Dimension [width * height, 3 * PIXELS ^ 2]
     target_features = oklab_features(targets_rgb)
     result = np.empty((len(targets_rgb), 3), dtype=np.int64)
     for tile in tqdm(range(len(targets_rgb)), desc="Scoring third-layer combinations"):
+        # Get Oklab values and norms for the image tiles
+        tile_features = target_features[tile:tile+1]
+        tile_features_norms = np.einsum("ij,ij->i", tile_features, tile_features)
         # Get the S best pairs
         pairs = two_layer_pairs[tile]
         # Construct all corresponding pair images as arrays
@@ -254,11 +259,12 @@ def find_three_layer_matches(targets_rgb, two_layer_pairs, backs_rgba, middles_r
             np.repeat(middle_rgb, len(fronts_rgba), axis=0),
             np.tile(fronts_rgba, (len(pairs), 1, 1, 1)),
         )
-        # Convert candidates into Oklab for comparison
+        # Get Oklab values and norms for the candidates
         features = oklab_features(candidates)
-        # Get best candidate-target distance directly
-        delta = features - target_features[tile]
-        winner = np.argmin(np.einsum("ij,ij->i", delta, delta))
+        feature_norms = np.einsum("ij,ij->i", features, features)
+        # Apply distance function
+        scores = tile_features_norms[:, None] + feature_norms[None, :] - 2.0 * tile_features @ features.T
+        winner = np.argmin(scores)
         # Convert best candidate to indices
         pair_index, front_index = divmod(int(winner), len(fronts_rgba))
         result[tile] = (*pairs[pair_index], front_index)
