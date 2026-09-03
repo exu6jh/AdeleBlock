@@ -18,7 +18,6 @@ PIXELS = 16
 ROOT = Path(__file__).resolve().parent
 TEXTURES = ROOT / "textures"
 OUTPUTS = ROOT / "outputs"
-SCORE_BATCH_SIZE = 1024
 
 # ===== Process image files into NP arrays ===== #
 
@@ -153,7 +152,7 @@ def _merge_shortlist(best_scores, best_indices, scores, offset):
         np.take_along_axis(merged_indices, selected, axis=1),
     )
 
-def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, shortlist_size, *, perceptual=True):
+def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, batch_size, shortlist_size, perceptual=True):
     """Return each target's best backing/overlay pairs and their distances
     
     Args:
@@ -185,12 +184,12 @@ def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, shortlist_siz
     best_scores = np.full((len(targets), keep), np.inf, dtype=np.single)
     best_indices = np.full((len(targets), keep), -1, dtype=np.int64)
     # The number of backing-overlay combos to score at once
-    batches = range(0, combination_count, SCORE_BATCH_SIZE)
-    total = (combination_count + SCORE_BATCH_SIZE - 1) // SCORE_BATCH_SIZE
+    batches = range(0, combination_count, batch_size)
+    total = (combination_count + batch_size - 1) // batch_size
 
-    for start in tqdm(batches, total=total, desc=f"Scoring two-layer combinations, {SCORE_BATCH_SIZE} combinations at a time"):
+    for start in tqdm(batches, total=total, desc=f"Scoring two-layer combinations, {batch_size} combinations at a time"):
         # Backing / overlay indices range
-        stop = min(start + SCORE_BATCH_SIZE, combination_count)
+        stop = min(start + batch_size, combination_count)
         indices = np.arange(start, stop)
         back_indices, overlay_indices = divmod(indices, len(overlays_rgba))
         # Get composites of all of the backing block and overlay blocks to be tested
@@ -393,6 +392,7 @@ def process_image(visual_file, width, height, layers, output_folder, video_frame
     parser = configparser.ConfigParser()
     parser.read(ROOT / "userpref.ini")
     shortlist_size = max(1, parser.getint("DEFAULT", "candidates", fallback=25))
+    batch_size = max(1, parser.getint("DEFAULT", "batch_size", fallback=1024))
 
     # Get textures
     front_paths = texture_files("front", "front-side")
@@ -407,7 +407,7 @@ def process_image(visual_file, width, height, layers, output_folder, video_frame
     targets, resized = tile_array(visual_file, width, height)
 
     # Find best matches
-    pairs, _ = find_two_layer_matches(targets, backs, middles, shortlist_size if layers == 3 else 1)
+    pairs, _ = find_two_layer_matches(targets, backs, middles, batch_size, shortlist_size if layers == 3 else 1)
     matches = find_three_layer_matches(targets, pairs, backs, middles, fronts) if layers == 3 else pairs[:, 0]
 
     # Save all output images and palette info
