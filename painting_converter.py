@@ -13,7 +13,6 @@ try:
 except ImportError:
     TKINTER_FLAG=False
 
-
 PIXELS = 16
 ROOT = Path(__file__).resolve().parent
 TEXTURES = ROOT / "textures"
@@ -81,8 +80,8 @@ def blend_rgb(background: np.ndarray, overlay: np.ndarray) -> np.ndarray:
     """Composite RGBA overlays onto RGB backgrounds (assuming number of backgrounds and overlays are equal)
     
     Args:
-        background: An NP array of block-divided background image values, dimension [#background, PIXELS, PIXELS, 3]
-        overlay: An NP array of block-divided overlay image values, dimension [#overlays, PIXELS, PIXELS, 4]
+        background: An NP array of block-divided background image values, dimension [#combos, PIXELS, PIXELS, 3]
+        overlay: An NP array of block-divided overlay image values, dimension [#combos, PIXELS, PIXELS, 4]
     
     Returns:
         out: An NP array corresponding to the composite RGB values, dimension [#combos, PIXELS, PIXELS, 3]
@@ -91,6 +90,17 @@ def blend_rgb(background: np.ndarray, overlay: np.ndarray) -> np.ndarray:
     foreground = overlay[..., :3].astype(np.uint16)
     background = background.astype(np.uint16)
     return ((foreground * alpha + background * (255 - alpha) + 127) // 255).astype(np.uint8)
+
+def flatten_features(rgb: np.ndarray) -> np.ndarray:
+    """Flatten sRGB pixels to feature vectors
+    
+    Args:
+        rgb: An NP array corresponding to block-divided sRGB values, dimension [#images, PIXELS, PIXELS, 3]
+    
+    Returns:
+        out: An NP array of block-divided flattened values, dimension [#images, 3 * PIXELS ^ 2]
+    """
+    return rgb.reshape(rgb.shape[0], -1).astype(np.single) / 255
 
 def oklab_features(rgb: np.ndarray) -> np.ndarray:
     """Convert sRGB pixels to OKLab feature vectors
@@ -125,7 +135,7 @@ def oklab_features(rgb: np.ndarray) -> np.ndarray:
 
 # ===== Compare targets and images for the best matches ===== #
 
-def _merge_shortlist(best_scores, best_indices, scores, offset):
+def _merge_shortlist(best_scores: np.ndarray, best_indices: np.ndarray, scores: np.ndarray, offset: int) -> tuple[np.ndarray, np.ndarray]:
     """Take the S (shortlist_size) current best scores and indices, then merge in new scores
     
     Args:
@@ -152,31 +162,28 @@ def _merge_shortlist(best_scores, best_indices, scores, offset):
         np.take_along_axis(merged_indices, selected, axis=1),
     )
 
-def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, batch_size, shortlist_size, perceptual=True):
+def find_two_layer_matches(targets_rgb: np.ndarray, backs_rgba: np.ndarray, overlays_rgba: np.ndarray, batch_size: int, shortlist_size: int, perceptual: bool) -> tuple[np.ndarray, np.single]:
     """Return each target's best backing/overlay pairs and their distances
     
     Args:
         targets_rgb: Target image tiles represented as an array, dimension [width * height, PIXELS, PIXELS, 3]
         backs_rgba: Backing images represented as an array, dimension [#backing, PIXELS, PIXELS, 4]
         overlays_rgba: Overlay images represented as an array, dimension [#overlays, PIXELS, PIXELS, 4]
+        batch_size: Batch size, number of backing-overlay combinations to be evaluated at once
         shortlist_size: The number of best scores/indices to keep, hereon shortened to S
 
     Returns:
         candidate_pairs: An NP array of the best backing/overlay pairs at each block, dimension [width * height, S, 2]
         candidate_scores: The corresponding scores at each block, dimension [width * height, S]
     """
+    # Dimension [width * height, 3 * PIXELS ^ 2]
     if perceptual:
-        # Dimension [width * height, 3 * PIXELS ^ 2]
         targets = oklab_features(targets_rgb)
-        # Einstein summation notation; this goes through each block and sums the square of the Oklab value
-        # Dimension [width * height], each value corresponds to the norm in each block
-        target_norms = np.einsum("ij,ij->i", targets, targets)
     else:
-        # Dimension [width * height, PIXELS ^ 2, 3]
-        targets = targets_rgb.reshape(len(targets_rgb), -1, 3).astype(np.single) / 255.0
-        # Einstein summation notation; this goes through each block, and for each channel, sums the square of the value
-        # Dimension [width * height, 3], each value corresponds to the norm in each block-channel
-        target_norms = np.einsum("tpc,tpc->tc", targets, targets)
+        targets = flatten_features(targets_rgb)
+    # Einstein summation notation; this goes through each block and sums the square of the Oklab value
+    # Dimension [width * height], each value corresponds to the norm in each block
+    target_norms = np.einsum("ij,ij->i", targets, targets)
     # Number of backing block / overlay block combinations
     combination_count = len(backs_rgba) * len(overlays_rgba)
     keep = min(shortlist_size, combination_count)
@@ -194,30 +201,17 @@ def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, batch_size, s
         back_indices, overlay_indices = divmod(indices, len(overlays_rgba))
         # Get composites of all of the backing block and overlay blocks to be tested
         composites = blend_rgb(backs_rgba[back_indices, ..., :3], overlays_rgba[overlay_indices])
+        # Like above, get Oklab values for the candidates and then get the norm in each block
+        # Dimension [#composites, 3 * PIXELS ^ 2]
         if perceptual:
-            # Like above, get Oklab values for the candidates and then get the norm in each block
-            # Dimension [#composites, 3 * PIXELS ^ 2]
             candidates = oklab_features(composites)
-            # Dimension [#composites]
-            candidate_norms = np.einsum("ij,ij->i", candidates, candidates)
-            # Apply distance function
-            # Dimension [width * height, #candidates]
-            scores = target_norms[:, None] + candidate_norms[None, :] - 2.0 * targets @ candidates.T
         else:
-            # Like above, get the norm for each block-channel
-            # Dimension [width * height, PIXELS ^ 2, 3]
-            candidates = composites.reshape(len(composites), -1, 3).astype(np.single) / 255.0
-            # Dimension [width * height, 3]
-            candidate_norms = np.einsum("kpc,kpc->kc", candidates, candidates)
-            scores = np.zeros((len(targets), len(candidates)), dtype=np.single)
-            # Apply distance function to each channel and add to score
-            for channel in range(3):
-                channel_ssd = (
-                    target_norms[:, channel, None]
-                    + candidate_norms[None, :, channel]
-                    - 2.0 * targets[:, :, channel] @ candidates[:, :, channel].T
-                )
-                scores += channel_ssd * channel_ssd
+            candidates = flatten_features(composites)
+        # Dimension [#composites]
+        candidate_norms = np.einsum("ij,ij->i", candidates, candidates)
+        # Apply distance function
+        # Dimension [width * height, #candidates]
+        scores = target_norms[:, None] + candidate_norms[None, :] - 2.0 * targets @ candidates.T
         # Update best scores and corresponding indices
         best_scores, best_indices = _merge_shortlist(best_scores, best_indices, scores, start)
     # Sort the best scores and their corresponding indices
@@ -228,7 +222,7 @@ def find_two_layer_matches(targets_rgb, backs_rgba, overlays_rgba, batch_size, s
     pairs = np.stack(divmod(best_indices, len(overlays_rgba)), axis=-1)
     return pairs, np.maximum(best_scores, 0.0)
 
-def find_three_layer_matches(targets_rgb, two_layer_pairs, backs_rgba, middles_rgba, fronts_rgba):
+def find_three_layer_matches(targets_rgb: np.ndarray, two_layer_pairs: np.ndarray, backs_rgba: np.ndarray, middles_rgba: np.ndarray, fronts_rgba: np.ndarray, perceptual: bool) -> np.ndarray:
     """Refine each target's two-layer shortlist with every front texture.
     
     Args:
@@ -243,7 +237,10 @@ def find_three_layer_matches(targets_rgb, two_layer_pairs, backs_rgba, middles_r
     """
     # Convert target image tiles into Oklab
     # Dimension [width * height, 3 * PIXELS ^ 2]
-    target_features = oklab_features(targets_rgb)
+    if perceptual:
+        target_features = oklab_features(targets_rgb)
+    else:
+        target_features = flatten_features(targets_rgb)
     result = np.empty((len(targets_rgb), 3), dtype=np.int64)
     for tile in tqdm(range(len(targets_rgb)), desc="Scoring third-layer combinations"):
         # Get Oklab values and norms for the image tiles
@@ -254,12 +251,14 @@ def find_three_layer_matches(targets_rgb, two_layer_pairs, backs_rgba, middles_r
         # Construct all corresponding pair images as arrays
         middle_rgb = blend_rgb(backs_rgba[pairs[:, 0], ..., :3], middles_rgba[pairs[:, 1]])
         # Construct all candidate pair, overlay image combos
-        candidates = blend_rgb(
-            np.repeat(middle_rgb, len(fronts_rgba), axis=0),
-            np.tile(fronts_rgba, (len(pairs), 1, 1, 1)),
-        )
+        middle_repeat = np.repeat(middle_rgb, len(fronts_rgba), axis=0)
+        front_tile = np.tile(fronts_rgba, (len(pairs), 1, 1, 1))
+        candidates = blend_rgb(middle_repeat, front_tile)
         # Get Oklab values and norms for the candidates
-        features = oklab_features(candidates)
+        if perceptual:
+            features = oklab_features(candidates)
+        else:
+            features = flatten_features(candidates)
         feature_norms = np.einsum("ij,ij->i", features, features)
         # Apply distance function
         scores = tile_features_norms[:, None] + feature_norms[None, :] - 2.0 * tile_features @ features.T
@@ -288,7 +287,7 @@ def tile_image(tiles: np.ndarray, width: int, height: int, mode: str) -> Image.I
     # Flatten to height * PIXELS, width * PIXELS, and channels, then produce image
     return Image.fromarray(pixels.reshape(height * PIXELS, width * PIXELS, -1), mode)
 
-def save_results(resized, output_folder, width, height, layers, matches, back_paths, middle_paths, front_paths, backs, middles, fronts, video_frame=0):
+def save_results(resized: Image.Image, output_folder: str, width: int, height: int, layers: int, matches: np.ndarray, back_paths: list[Path], middle_paths: list[Path], front_paths: list[Path], backs: np.ndarray, middles: np.ndarray, fronts: np.ndarray, video_frame: int = 0) -> str:
     """Save all result images and palette info
     
     Args:
@@ -374,7 +373,7 @@ def read_positive_int(prompt: str) -> int:
             pass
         print("Enter a positive whole number.")
 
-def process_image(visual_file, width, height, layers, output_folder, video_frame=0) -> None:
+def process_image(visual_file: Image.Image, width: int, height: int, layers: int, output_folder: str, video_frame: int = 0) -> None:
     """Main visual processing function, take in image, dimensions, layers, and output info, and then save info to outputs
     
     Args:
@@ -388,11 +387,13 @@ def process_image(visual_file, width, height, layers, output_folder, video_frame
     Returns:
         None, all outputs are saved
     """
-    # Get candidate shortlist size
+    # Get config values
     parser = configparser.ConfigParser()
     parser.read(ROOT / "userpref.ini")
     shortlist_size = max(1, parser.getint("DEFAULT", "candidates", fallback=25))
     batch_size = max(1, parser.getint("DEFAULT", "batch_size", fallback=1024))
+    perceptual = parser.getboolean("DEFAULT", "perceptual", fallback=True)
+    print(shortlist_size, batch_size, perceptual)
 
     # Get textures
     front_paths = texture_files("front", "front-side")
@@ -407,8 +408,8 @@ def process_image(visual_file, width, height, layers, output_folder, video_frame
     targets, resized = tile_array(visual_file, width, height)
 
     # Find best matches
-    pairs, _ = find_two_layer_matches(targets, backs, middles, batch_size, shortlist_size if layers == 3 else 1)
-    matches = find_three_layer_matches(targets, pairs, backs, middles, fronts) if layers == 3 else pairs[:, 0]
+    pairs, _ = find_two_layer_matches(targets, backs, middles, batch_size, shortlist_size if layers == 3 else 1, perceptual)
+    matches = find_three_layer_matches(targets, pairs, backs, middles, fronts, perceptual) if layers == 3 else pairs[:, 0]
 
     # Save all output images and palette info
     output_folder = save_results(
@@ -417,7 +418,7 @@ def process_image(visual_file, width, height, layers, output_folder, video_frame
     )
     print(f"Completed. Output: {output_folder}")
 
-def main():
+def main() -> None:
     """Main processing function; take user input on file, width, height, and layers, and then output to output folder"""
     # Specify file
     if TKINTER_FLAG:
