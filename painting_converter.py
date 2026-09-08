@@ -176,7 +176,7 @@ def find_two_layer_matches(targets_rgb: np.ndarray, backs_rgba: np.ndarray, over
         candidate_pairs: An NP array of the best backing/overlay pairs at each block, dimension [width * height, S, 2]
         candidate_scores: The corresponding scores at each block, dimension [width * height, S]
     """
-    # Dimension [width * height, 3 * PIXELS ^ 2]
+    # Get flattened features, dimension [width * height, 3 * PIXELS ^ 2]
     if perceptual:
         targets = oklab_features(targets_rgb)
     else:
@@ -201,16 +201,14 @@ def find_two_layer_matches(targets_rgb: np.ndarray, backs_rgba: np.ndarray, over
         back_indices, overlay_indices = divmod(indices, len(overlays_rgba))
         # Get composites of all of the backing block and overlay blocks to be tested
         composites = blend_rgb(backs_rgba[back_indices, ..., :3], overlays_rgba[overlay_indices])
-        # Like above, get Oklab values for the candidates and then get the norm in each block
-        # Dimension [#composites, 3 * PIXELS ^ 2]
+        # Get flattened features for candidates, dimension [#composites, 3 * PIXELS ^ 2]
         if perceptual:
             candidates = oklab_features(composites)
         else:
             candidates = flatten_features(composites)
-        # Dimension [#composites]
+        # Get candidate norms, dimension [#composites]
         candidate_norms = np.einsum("ij,ij->i", candidates, candidates)
-        # Apply distance function
-        # Dimension [width * height, #candidates]
+        # Apply distance function, dimension [width * height, #candidates]
         scores = target_norms[:, None] + candidate_norms[None, :] - 2.0 * targets @ candidates.T
         # Update best scores and corresponding indices
         best_scores, best_indices = _merge_shortlist(best_scores, best_indices, scores, start)
@@ -235,15 +233,14 @@ def find_three_layer_matches(targets_rgb: np.ndarray, two_layer_pairs: np.ndarra
     Returns:
         out: NP array of file indices in the best three-layer combination found, dimension [width * height, 3]
     """
-    # Convert target image tiles into Oklab
-    # Dimension [width * height, 3 * PIXELS ^ 2]
+    # Get flattened features, dimension [width * height, 3 * PIXELS ^ 2]
     if perceptual:
         target_features = oklab_features(targets_rgb)
     else:
         target_features = flatten_features(targets_rgb)
     result = np.empty((len(targets_rgb), 3), dtype=np.int64)
     for tile in tqdm(range(len(targets_rgb)), desc="Scoring third-layer combinations"):
-        # Get Oklab values and norms for the image tiles
+        # Get features and norms for the image tiles
         tile_features = target_features[tile:tile+1]
         tile_features_norms = np.einsum("ij,ij->i", tile_features, tile_features)
         # Get the S best pairs
@@ -254,7 +251,7 @@ def find_three_layer_matches(targets_rgb: np.ndarray, two_layer_pairs: np.ndarra
         middle_repeat = np.repeat(middle_rgb, len(fronts_rgba), axis=0)
         front_tile = np.tile(fronts_rgba, (len(pairs), 1, 1, 1))
         candidates = blend_rgb(middle_repeat, front_tile)
-        # Get Oklab values and norms for the candidates
+        # Get flattened features and norms for the candidates
         if perceptual:
             features = oklab_features(candidates)
         else:
@@ -393,7 +390,6 @@ def process_image(visual_file: Image.Image, width: int, height: int, layers: int
     shortlist_size = max(1, parser.getint("DEFAULT", "candidates", fallback=25))
     batch_size = max(1, parser.getint("DEFAULT", "batch_size", fallback=1024))
     perceptual = parser.getboolean("DEFAULT", "perceptual", fallback=True)
-    print(shortlist_size, batch_size, perceptual)
 
     # Get textures
     front_paths = texture_files("front", "front-side")
@@ -417,6 +413,31 @@ def process_image(visual_file: Image.Image, width: int, height: int, layers: int
         middle_paths, front_paths, backs, middles, fronts, video_frame
     )
     print(f"Completed. Output: {output_folder}")
+
+def process_gif(visual_file: Image.Image, width: int, height: int, layers: int, output_folder: str):
+    frame_durations = []
+    frame_index = 0
+    for frame in ImageSequence.Iterator(visual_file):
+        frame_index += 1
+        frame_durations.append(frame.info.get("duration", 100))
+        process_image(frame, width, height, layers, output_folder, video_frame=frame_index)
+
+    if frame_index == 0:
+        # GIF has no frames
+        return
+    # Open all output images
+    output_imgs = []
+    for i in range(frame_index):
+        frame_output = output_folder / "frames" / str(i+1) / "output.png"
+        with Image.open(frame_output) as img:
+            # Open in-memory to prevent issue with too many files being loaded
+            img.load()
+            output_imgs.append(img.copy())
+    # Save to a GIF
+    output_imgs[0].save(output_folder / "output.gif", save_all=True, append_images=output_imgs[1:], duration=frame_durations, loop=0)
+    # Close all output images
+    for i in range(frame_index):
+        output_imgs[i].close()
 
 def main() -> None:
     """Main processing function; take user input on file, width, height, and layers, and then output to output folder"""
@@ -446,28 +467,10 @@ def main() -> None:
     ext = file_path.suffix
     # Handle processing of GIFs differently
     if ext == '.gif':
-        print("GIF detected.")
+        print("Processing GIF.")
         # Process all frames, keeping track of number of frames and max duration
-        frame_index, max_duration = 0, 0
         with Image.open(visual_filename) as visual_file:
-            for frame in ImageSequence.Iterator(visual_file):
-                frame_index += 1
-                max_duration = max(max_duration, frame.info.get("duration", 100))
-                process_image(frame, width, height, layers, output_folder, video_frame=frame_index)
-
-        if frame_index == 0:
-            # GIF has no frames
-            return
-        # Open all output images
-        output_imgs = []
-        for i in range(frame_index):
-            frame_output = output_folder / "frames" / str(i+1) / "output.png"
-            output_imgs.append(Image.open(frame_output))
-        # Save to a GIF
-        output_imgs[0].save(output_folder / "output.gif", save_all=True, append_images=output_imgs[1:], duration=max_duration, loop=0)
-        # Close all output images
-        for i in range(frame_index):
-            output_imgs[i].close()
+            process_gif(visual_file, width, height, layers, output_folder)
     else:
         # Simple image processing
         with Image.open(visual_filename) as visual_file:
