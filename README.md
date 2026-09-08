@@ -1,5 +1,14 @@
 # AdeleBlock
-AdeleBlock converts static images and GIFs into Minecraft block mosaics of a given size. Each source tile maps to one 16 × 16 block texture. The program can combine two or three block layers.
+AdeleBlock converts static images and GIFs into Minecraft block mosaics of a given size. Each source tile maps to one 16 × 16 block texture. The program can combine two or three block layers, and can use either standard sRGB (faster, less perceptually-accurate), or Oklab (slower, more perceptually-accurate).
+
+<figure>
+    <img src="./readme_resources/mona_lisa_blocks_2layers.png"/>
+    <figcaption>The Mona Lisa, 16 blocks by 16 blocks, 2 layers</figcaption>
+</figure>
+<figure>
+    <img src="./readme_resources/mona_lisa_blocks_3layers.png"/>
+    <figcaption>The Mona Lisa, 16 blocks by 16 blocks, 3 layers</figcaption>
+</figure>
 
 ## Requirements
 - Python 3.10 or later
