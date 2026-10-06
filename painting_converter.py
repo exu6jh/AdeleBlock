@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import configparser
+import logging
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 from PIL import Image, ImageSequence
@@ -17,6 +19,7 @@ PIXELS = 16
 ROOT = Path(__file__).resolve().parent
 TEXTURES = ROOT / "textures"
 OUTPUTS = ROOT / "outputs"
+logger = logging.getLogger(__name__)
 
 # ===== Process image files into NP arrays ===== #
 
@@ -102,6 +105,27 @@ def flatten_features(rgb: np.ndarray) -> np.ndarray:
     """
     return rgb.reshape(rgb.shape[0], -1).astype(np.single) / 255
 
+# sRGB (0-255) to linear RGB lookup table, using the standard transfer function
+_SRGB_VALUES = np.arange(256, dtype=np.single) / 255.0
+SRGB_TO_LINEAR = np.where(_SRGB_VALUES <= 0.04045, _SRGB_VALUES / 12.92, ((_SRGB_VALUES + 0.055) / 1.055) ** 2.4).astype(np.single)
+# Linear RGB to LMS-like space, and cube-rooted LMS to Oklab (transposed so that they right-multiply row vectors)
+LINEAR_TO_LMS = np.array(
+    (
+        (0.41222147, 0.53633254, 0.05144599),
+        (0.21190350, 0.68069955, 0.10739696),
+        (0.08830246, 0.28171884, 0.62997870),
+    ),
+    dtype=np.single,
+).T
+LMS_TO_OKLAB = np.array(
+    (
+        (0.21045426, 0.79361779, -0.00407205),
+        (1.97799850, -2.42859221, 0.45059371),
+        (0.02590404, 0.78277177, -0.80867577),
+    ),
+    dtype=np.single,
+).T
+
 def oklab_features(rgb: np.ndarray) -> np.ndarray:
     """Convert sRGB pixels to OKLab feature vectors
     
@@ -111,27 +135,13 @@ def oklab_features(rgb: np.ndarray) -> np.ndarray:
     Returns:
         out: An NP array of block-divided flattened Oklab values, dimension [#images, 3 * PIXELS ^ 2]
     """
-    # Scale sRGB (0-255) to a 0-1 fractional value
-    values = rgb.astype(np.single) / 255.0
-    # Convert sRGB to linear RGB using standard transfer function
-    values = np.where(values <= 0.04045, values / 12.92, ((values + 0.055) / 1.055) ** 2.4)
-    # This makes it so that the channel index is top level, i.e. [0] corresponds to red over all pixels, [1] to green, etc.
-    red, green, blue = np.moveaxis(values, -1, 0)
-    # Apply linear transformation to get LMS-like space, then apply cube root
-    cbrt_long = np.cbrt(0.41222147 * red + 0.53633254 * green + 0.05144599 * blue)
-    cbrt_medium = np.cbrt(0.21190350 * red + 0.68069955 * green + 0.10739696 * blue)
-    cbrt_short = np.cbrt(0.08830246 * red + 0.28171884 * green + 0.62997870 * blue)
-    # Apply linear transformation and stack in new dimension to get Oklab values, same dimension as input
-    lab = np.stack(
-        (
-            0.21045426 * cbrt_long + 0.79361779 * cbrt_medium - 0.00407205 * cbrt_short,
-            1.97799850 * cbrt_long - 2.42859221 * cbrt_medium + 0.45059371 * cbrt_short,
-            0.02590404 * cbrt_long + 0.78277177 * cbrt_medium - 0.80867577 * cbrt_short,
-        ),
-        axis=-1,
-    )
-    # Flatten RGB values (PIXELS * PIXELS pixels, 3 channels) to one subarray
-    return lab.reshape(rgb.shape[0], -1)
+    # Convert sRGB to linear RGB by table lookup, with one pixel per row
+    linear = SRGB_TO_LINEAR[rgb].reshape(-1, 3)
+    # Apply linear transformation to get LMS-like space, then apply cube root in place
+    lms = linear @ LINEAR_TO_LMS
+    np.cbrt(lms, out=lms)
+    # Apply linear transformation to get Oklab values, then flatten RGB values (PIXELS * PIXELS pixels, 3 channels) to one subarray
+    return (lms @ LMS_TO_OKLAB).reshape(rgb.shape[0], -1)
 
 # ===== Compare targets and images for the best matches ===== #
 
@@ -233,36 +243,105 @@ def find_three_layer_matches(targets_rgb: np.ndarray, two_layer_pairs: np.ndarra
     Returns:
         out: NP array of file indices in the best three-layer combination found, dimension [width * height, 3]
     """
-    # Get flattened features, dimension [width * height, 3 * PIXELS ^ 2]
-    if perceptual:
-        target_features = oklab_features(targets_rgb)
-    else:
-        target_features = flatten_features(targets_rgb)
+    method_started = perf_counter()
+    step_times: dict[str, float] = {}
+
+    def finish_step(name: str, started: float) -> float:
+        finished = perf_counter()
+        step_times[name] = step_times.get(name, 0.0) + finished - started
+        return finished
+
+    # A front pixel with alpha 0 leaves the middle pixel unchanged, and one with alpha 255 replaces it outright,
+    # so only partially transparent front pixels need to be composited and converted for every candidate.
+    # The score of a candidate is the sum of per-pixel squared feature distances, which is split into these three cases.
+
+    # Convert features
+    features_of = oklab_features if perceptual else flatten_features
+    pixel_count = PIXELS * PIXELS
+
+    # Get per-pixel features, dimension [width * height, PIXELS ^ 2, 3]
+    step_started = perf_counter()
+    target_features = features_of(targets_rgb).reshape(len(targets_rgb), pixel_count, 3)
+    step_started = finish_step("target feature conversion", step_started)
+
+    # Front layer masks and features, dimension [#front, PIXELS ^ 2] and [#front, PIXELS ^ 2, 3]
+    front_pixels = fronts_rgba.reshape(len(fronts_rgba), pixel_count, 4)
+    front_alpha = front_pixels[..., 3]
+    transparent = (front_alpha == 0).astype(np.single)
+    opaque = (front_alpha == 255).astype(np.single)
+    front_features = features_of(fronts_rgba[..., :3]).reshape(len(fronts_rgba), pixel_count, 3)
+    # Opaque-pixel distance from every target to every front, dimension [width * height, #front]
+    # Expanded as |t|^2 - 2 t.f + |f|^2, summed over the opaque pixels of each front
+    opaque_features = (front_features * opaque[..., None]).reshape(len(fronts_rgba), -1)
+    opaque_norms = np.einsum("ij,ij->i", opaque_features, opaque_features)
+    target_pixel_norms = np.einsum("ijk,ijk->ij", target_features, target_features)
+    opaque_scores = (
+        target_pixel_norms @ opaque.T
+        - 2.0 * target_features.reshape(len(targets_rgb), -1) @ opaque_features.T
+        + opaque_norms[None, :]
+    )
+    # Partially transparent front pixels as flat (front index, pixel index) lists, sorted by front index
+    partial_fronts, partial_pixels = np.nonzero((front_alpha > 0) & (front_alpha < 255))
+    partial_overlays = front_pixels[partial_fronts, partial_pixels]
+    # Start of each front's run of partial pixels, used to sum partial distances per front
+    partial_groups, partial_starts = np.unique(partial_fronts, return_index=True)
+    step_started = finish_step("front-layer preparation", step_started)
+
     result = np.empty((len(targets_rgb), 3), dtype=np.int64)
     for tile in tqdm(range(len(targets_rgb)), desc="Scoring third-layer combinations"):
-        # Get features and norms for the image tiles
-        tile_features = target_features[tile:tile+1]
-        tile_features_norms = np.einsum("ij,ij->i", tile_features, tile_features)
+        # Get the features for the image tile, dimension [PIXELS ^ 2, 3]
+        step_started = perf_counter()
+        tile_features = target_features[tile]
+        step_started = finish_step("tile feature preparation", step_started)
+
         # Get the S best pairs
+        step_started = perf_counter()
         pairs = two_layer_pairs[tile]
-        # Construct all corresponding pair images as arrays
-        middle_rgb = blend_rgb(backs_rgba[pairs[:, 0], ..., :3], middles_rgba[pairs[:, 1]])
-        # Construct all candidate pair, overlay image combos
-        middle_repeat = np.repeat(middle_rgb, len(fronts_rgba), axis=0)
-        front_tile = np.tile(fronts_rgba, (len(pairs), 1, 1, 1))
-        candidates = blend_rgb(middle_repeat, front_tile)
-        # Get flattened features and norms for the candidates
-        if perceptual:
-            features = oklab_features(candidates)
-        else:
-            features = flatten_features(candidates)
-        feature_norms = np.einsum("ij,ij->i", features, features)
-        # Apply distance function
-        scores = tile_features_norms[:, None] + feature_norms[None, :] - 2.0 * tile_features @ features.T
+        step_started = finish_step("shortlist retrieval", step_started)
+
+        # Construct all corresponding pair images as arrays, dimension [S, PIXELS ^ 2, 3]
+        step_started = perf_counter()
+        middle_rgb = blend_rgb(backs_rgba[pairs[:, 0], ..., :3], middles_rgba[pairs[:, 1]]).reshape(len(pairs), pixel_count, 3)
+        step_started = finish_step("middle-layer compositing", step_started)
+
+        # Per-pixel distance between the tile and each pair, dimension [S, PIXELS ^ 2]
+        step_started = perf_counter()
+        middle_features = features_of(middle_rgb).reshape(middle_rgb.shape)
+        middle_differences = middle_features - tile_features
+        middle_distances = np.einsum("ijk,ijk->ij", middle_differences, middle_differences)
+        step_started = finish_step("middle-layer feature conversion", step_started)
+
+        # Scores from transparent and opaque front pixels, dimension [S, #front]
+        step_started = perf_counter()
+        scores = middle_distances @ transparent.T + opaque_scores[tile]
+        step_started = finish_step("transparent and opaque front scoring", step_started)
+
+        # Composite only the partially transparent front pixels onto each pair, dimension [S, #partial, 3]
+        step_started = perf_counter()
+        candidates = blend_rgb(np.take(middle_rgb, partial_pixels, axis=1), partial_overlays)
+        step_started = finish_step("front-layer compositing", step_started)
+
+        step_started = perf_counter()
+        features = features_of(candidates).reshape(candidates.shape)
+        step_started = finish_step("candidate feature conversion", step_started)
+
+        # Sum partial pixel distances per front and add them to the scores
+        step_started = perf_counter()
+        if len(partial_groups):
+            partial_differences = features - tile_features[partial_pixels]
+            partial_distances = np.einsum("ijk,ijk->ij", partial_differences, partial_differences)
+            scores[:, partial_groups] += np.add.reduceat(partial_distances, partial_starts, axis=1)
+        step_started = finish_step("candidate scoring", step_started)
+
         winner = np.argmin(scores)
         # Convert best candidate to indices
         pair_index, front_index = divmod(int(winner), len(fronts_rgba))
         result[tile] = (*pairs[pair_index], front_index)
+        finish_step("winner selection and result storage", step_started)
+
+    for step, elapsed in step_times.items():
+        logger.info("find_three_layer_matches: %s took %.6f seconds", step, elapsed)
+    logger.info("find_three_layer_matches: total took %.6f seconds", perf_counter() - method_started)
     return result
 
 # ===== Save results =====
@@ -441,6 +520,7 @@ def process_gif(visual_file: Image.Image, width: int, height: int, layers: int, 
 
 def main() -> None:
     """Main processing function; take user input on file, width, height, and layers, and then output to output folder"""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
     # Specify file
     if TKINTER_FLAG:
         print("Select a file to convert.")

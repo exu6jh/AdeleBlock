@@ -31,6 +31,7 @@ python painting_converter.py
 Select an image. Then enter the required block width, block height, and layer count. The program writes the result, each separate layer, and a block palette to `outputs/<source filename>/`.
 
 For three-layer images, `candidates` in `userpref.ini` controls the number of two-layer matches that the program tests with every third-layer texture. A larger value can improve the result, but it increases the third-layer run time and memory use.
+When running the converter, INFO-level logs report elapsed time for each three-layer matching stage, summed across source tiles, along with the total matching time.
 
 ## Algorithm
 The program loads each texture from a folder of backing, middle-layer, and overlay blocks. It then composites candidate texture batches and converts the candidates and source tiles from sRGB to Oklab.
