@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import configparser
 import logging
+from functools import cache
 from pathlib import Path
 from time import perf_counter
 
@@ -57,6 +58,26 @@ def load_textures(paths: list[Path]) -> np.ndarray:
         textures.append(rgba)
     # Stack arrays in the first dimension
     return np.stack(textures)
+
+@cache
+def load_texture_set() -> tuple[list[Path], list[Path], list[Path], np.ndarray, np.ndarray, np.ndarray]:
+    """Load all front, middle, and back textures once, caching the result so repeated calls (e.g. GIF frames) skip disk reads
+
+    Returns:
+        out: A tuple (front_paths, middle_paths, back_paths, fronts, middles, backs), with the arrays marked read-only
+    """
+    front_paths = texture_files("front", "front-side")
+    mid_only_paths = texture_files("mid", "mid-side")
+    back_paths = texture_files("back", "back-side")
+    print("Loading textures.")
+    fronts = load_textures(front_paths)
+    # Middle textures include the front textures, so reuse those instead of reloading them
+    middles = np.concatenate((fronts, load_textures(mid_only_paths))) if mid_only_paths else fronts.copy()
+    backs = load_textures(back_paths)
+    # Prevent accidental modification of the cached arrays
+    for textures in (fronts, middles, backs):
+        textures.flags.writeable = False
+    return front_paths, front_paths + mid_only_paths, back_paths, fronts, middles, backs
 
 def tile_array(image: Image.Image, width: int, height: int) -> np.ndarray:
     """Create an NP array corresponding to a Pillow image resized to be a given number of blocks wide and tall
@@ -470,14 +491,8 @@ def process_image(visual_file: Image.Image, width: int, height: int, layers: int
     batch_size = max(1, parser.getint("DEFAULT", "batch_size", fallback=1024))
     perceptual = parser.getboolean("DEFAULT", "perceptual", fallback=True)
 
-    # Get textures
-    front_paths = texture_files("front", "front-side")
-    middle_paths = front_paths + texture_files("mid", "mid-side")
-    back_paths = texture_files("back", "back-side")
-    print("Loading textures.")
-    fronts = load_textures(front_paths)
-    middles = load_textures(middle_paths)
-    backs = load_textures(back_paths)
+    # Get textures (cached after the first call)
+    front_paths, middle_paths, back_paths, fronts, middles, backs = load_texture_set()
 
     # Get specified file tiles
     targets, resized = tile_array(visual_file, width, height)
